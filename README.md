@@ -2,7 +2,7 @@
 
 `dsh-imessage` adds a Photon-hosted iMessage transport and a **Settings → iMessage** page to the DeepSeek Harness web profile. A user authorizes Photon with device login, saves the phone number they will send from, and receives a hosted iMessage number to text. Messages from that exact route become DSH prompts and final DSH answers are sent back over iMessage.
 
-This package is alpha software. The initial compatibility target is:
+The initial compatibility target is:
 
 - DeepSeek Harness `0.1.0-rc.6`
 - Spectrum `12.7.x` (the package is currently locked to `12.7.0`)
@@ -10,36 +10,30 @@ This package is alpha software. The initial compatibility target is:
 
 ## Install
 
-Install the current npm alpha, then start DSH from the workspace its iMessage sessions should use:
+Install the stable npm package, then start DSH from the workspace its iMessage sessions should use:
 
 ```sh
-dsh plugin --profile web add dsh-imessage@alpha
+dsh plugin --profile web add dsh-imessage
 dsh web
 ```
 
-DSH forwards `plugin ... add` to the profile package manager. Stable releases will use the unqualified package name; while the package is alpha, keep the explicit `@alpha` tag so npm never selects a stable version unexpectedly.
+DSH forwards `plugin ... add` to the profile package manager. The unqualified package name follows npm's stable `latest` channel; use an explicit prerelease tag only when intentionally testing one.
 
 If DSH is run through `npx` and `pnpm` is not installed globally, supply both tools for the install command without changing the global environment:
 
 ```sh
-npx --yes --package=pnpm@10.33.0 --package=@deepseek-ai/dsh -- \
-  dsh plugin --profile web add dsh-imessage@alpha
+npx --yes --package=pnpm@10.33.0 --package=@deepseek-ai/dsh \
+  -c 'dsh plugin --profile web add dsh-imessage'
 npx --yes @deepseek-ai/dsh web
 ```
 
-The matching GitHub Release tarball remains available as a registry-independent fallback:
-
-```sh
-dsh plugin --profile web add https://github.com/photon-hq/dsh-imessage/releases/download/v0.1.0-alpha.3/dsh-imessage-0.1.0-alpha.3.tgz
-```
-
-For a local checkout or packed prerelease:
+For a local checkout or packed build:
 
 ```sh
 npm ci --legacy-peer-deps
 npm run build
 npm pack
-dsh plugin --profile web add ./dsh-imessage-0.1.0-alpha.3.tgz
+dsh plugin --profile web add ./dsh-imessage-*.tgz
 ```
 
 Open **Settings → iMessage** and complete the three cards:
@@ -173,18 +167,11 @@ The test suite covers device-flow backoff/cancellation, secret redaction, projec
 
 ## Releasing
 
-The tag-driven [release workflow](https://github.com/photon-hq/dsh-imessage/actions/workflows/release.yml) verifies that the tag exactly matches `package.json`, runs the full check, packs the built plugin, and attaches the installable `.tgz` to a GitHub Release. Versions containing a prerelease suffix are marked as prereleases automatically. The workflow needs only GitHub's built-in token.
+The [release workflow](https://github.com/photon-hq/dsh-imessage/actions/workflows/publish-npm.yml) delegates to BuildSpace's single-package TypeScript pipeline. To release, add the `release` label to a pull request before merging it into `main`. BuildSpace then determines the semantic version, generates release notes, commits the version bump, creates the GitHub Release, runs the full package check, and publishes to npm's stable `latest` channel with provenance.
 
-To cut a later prerelease, update and validate the package version on `main`, then push its matching tag:
+For a prerelease, apply both `release` and `prerelease`; BuildSpace publishes that version to its prerelease channel instead. Unlabeled merges run normal CI but do not release. A manual dispatch can force a release for recovery. BuildSpace's `dry-run` skips npm publication only; when combined with a forced release it still creates the version commit and GitHub Release, so pull-request CI is the safe validation path.
 
-```sh
-npm version prerelease --preid alpha
-git push origin main --follow-tags
-```
-
-Publishing the same artifact to npm is the primary DSH distribution path. Do not add a long-lived npm token solely for releases.
-
-The repository includes a separate [npm publishing workflow](https://github.com/photon-hq/dsh-imessage/actions/workflows/publish-npm.yml). It uses npm Trusted Publishing with GitHub OIDC, publishes prereleases under their matching `alpha`, `beta`, or `rc` dist-tag, and reserves `latest` for stable versions. No `NPM_TOKEN` is used.
+The workflow uses npm Trusted Publishing through GitHub OIDC. Do not add a long-lived `NPM_TOKEN` solely for releases. It intentionally calls BuildSpace `main` because the immutable `v1` workflow predates OIDC support; move to the next immutable BuildSpace tag once it contains `use-oidc`.
 
 `dsh-imessage` was bootstrapped once at `0.1.0-alpha.1`, then configured through the npm CLI with these exact Trusted Publisher values:
 
@@ -203,9 +190,9 @@ The configuration can be inspected through the npm CLI:
 npx --yes npm@11.19.0 trust list dsh-imessage
 ```
 
-OIDC publishing was verified with `0.1.0-alpha.2`, including npm's SLSA provenance attestation. The package's publishing access is set to **Require two-factor authentication and disallow tokens**, and the temporary bootstrap CLI session was logged out afterward.
+OIDC publishing was verified with the alpha releases, including npm's SLSA provenance attestation. The package's publishing access is set to **Require two-factor authentication and disallow tokens**, and the temporary bootstrap CLI session was logged out afterward.
 
-Before promoting alpha to beta, run a Photon staging smoke test with a real hosted line: authorize, create/reuse `dsh`, provision/reuse a sender, send an inbound prompt, answer an approval and question, exercise `/new`, `/sessions`, `/switch`, stop/restart DSH, confirm replay deduplication, reauthorize after token expiry, and disconnect while verifying the Photon project/users remain.
+Before a compatibility-target promotion, run a Photon staging smoke test with a real hosted line: authorize, create/reuse `dsh`, provision/reuse a sender, send an inbound prompt, answer an approval and question, exercise `/new`, `/sessions`, `/switch`, stop/restart DSH, confirm replay deduplication, reauthorize after token expiry, and disconnect while verifying the Photon project/users remain.
 
 ## References
 
