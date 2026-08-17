@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
+import { parseTrailingJsonArray } from './pack-report.mjs'
 
 const execute = promisify(execFile)
 const projectRoot = resolve(import.meta.dirname, '..')
@@ -16,7 +17,7 @@ try {
   const packed = await execute('npm', [
     'pack', '--json', '--ignore-scripts', '--pack-destination', packDirectory,
   ], { cwd: projectRoot })
-  const report = JSON.parse(packed.stdout)
+  const report = parseTrailingJsonArray(packed.stdout)
   const filename = report[0]?.filename
   if (typeof filename !== 'string') throw new Error('npm pack did not return a tarball filename')
   const tarball = join(packDirectory, filename)
