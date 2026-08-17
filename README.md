@@ -30,7 +30,7 @@ npx --yes @deepseek-ai/dsh web
 The matching GitHub Release tarball remains available as a registry-independent fallback:
 
 ```sh
-dsh plugin --profile web add https://github.com/photon-hq/dsh-imessage/releases/download/v0.1.0-alpha.2/dsh-imessage-0.1.0-alpha.2.tgz
+dsh plugin --profile web add https://github.com/photon-hq/dsh-imessage/releases/download/v0.1.0-alpha.3/dsh-imessage-0.1.0-alpha.3.tgz
 ```
 
 For a local checkout or packed prerelease:
@@ -39,7 +39,7 @@ For a local checkout or packed prerelease:
 npm ci --legacy-peer-deps
 npm run build
 npm pack
-dsh plugin --profile web add ./dsh-imessage-0.1.0-alpha.2.tgz
+dsh plugin --profile web add ./dsh-imessage-0.1.0-alpha.3.tgz
 ```
 
 Open **Settings → iMessage** and complete the three cards:
@@ -78,7 +78,7 @@ The listener accepts only inbound text messages for which all of the following a
 - direction is inbound;
 - space is a direct message;
 - sender equals the configured E.164 number;
-- recipient line equals the assigned hosted number;
+- the route is the assigned hosted line: dedicated connections expose and verify the exact recipient number; shared connections are project-scoped by Photon and carry Spectrum's `shared` recipient sentinel because the provider does not expose an inbound recipient field;
 - service is iMessage when the provider includes service metadata.
 
 Unauthorized traffic is ignored without a reply. The plugin does not log message content, raw phone numbers, device codes, access tokens, or project secrets. It stores:
@@ -100,6 +100,8 @@ The plugin implements Photon CLI’s current RFC 8628 device flow directly over 
 This shared client ID is an intentional compatibility exception. The contract fixture is pinned to Photon CLI commit [`13fb65a3f33e801cb50f7e7a240a8eb6466c4152`](https://github.com/photon-hq/cli/commit/13fb65a3f33e801cb50f7e7a240a8eb6466c4152), including [`src/commands/login.ts`](https://github.com/photon-hq/cli/blob/13fb65a3f33e801cb50f7e7a240a8eb6466c4152/src/commands/login.ts). If Photon issues a dedicated client ID for this plugin, migrate the constants and contract fixture together before changing the production flow.
 
 Automatic user provisioning creates a **shared** Spectrum user with invitations disabled. If an exact phone user already exists, the plugin reuses it whether its allocation is shared or dedicated. If shared capacity is unavailable, setup stops with `shared-line-unavailable`; configure/resolve a dedicated line with Photon before retrying.
+
+For shared allocations, Photon performs hosted-line routing before delivering the project-scoped stream. Spectrum 12.7 represents that route as `space.phone = "shared"`; the plugin therefore verifies the exact configured sender, direct-message shape, and iMessage service while relying on Photon's project boundary for the recipient. Dedicated allocations continue to be checked against the exact assigned hosted number.
 
 Phone replacement is non-destructive. The new Photon user and Spectrum connection are prepared before local settings switch, and the old working listener remains active if preparation fails. Old Photon users are intentionally retained.
 

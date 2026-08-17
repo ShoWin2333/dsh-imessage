@@ -52,9 +52,9 @@ function Loaded({ controller }: ImessageSettingsInjected): ReactNode {
       <PhoneCard controller={controller} state={snapshot.state} pending={snapshot.pendingAction} />
       <LineCard controller={controller} state={snapshot.state} pending={snapshot.pendingAction} />
       <p className="dsh-imessage-footnote">
-        Only messages from your saved number to the assigned line are accepted. Message text and raw phone
-        numbers are not written to plugin logs. Disconnecting removes local routing only; it never deletes
-        Photon projects or users.
+        Only iMessage DMs from your saved number are accepted; Photon scopes shared-line delivery to this
+        project and routes it through the assigned line. Message text and raw phone numbers are not written
+        to plugin logs. Disconnecting removes local routing only; it never deletes Photon projects or users.
       </p>
     </section>
   )

@@ -3,6 +3,9 @@ import { imessage } from '@spectrum-ts/imessage'
 import { PluginError } from './errors.js'
 import type { RuntimeView } from './types.js'
 
+/** Recipient marker emitted by Spectrum 12.7 for project-scoped shared lines. */
+const SPECTRUM_SHARED_PHONE = 'shared'
+
 /** Credentials required to discover and connect the project's hosted line. */
 export interface SpectrumConnectionConfig {
   /** Photon project id. */
@@ -302,7 +305,14 @@ export function acceptsInboundMessage(
   if (sender['service'] !== undefined && sender['service'] !== 'iMessage') return false
   if (!raw.space || typeof raw.space !== 'object') return false
   const space = raw.space as Record<string, unknown>
-  return space['type'] === 'dm' && space['phone'] === config.assignedPhoneNumber
+  if (space['type'] !== 'dm') return false
+
+  // Spectrum cannot expose the recipient on shared-token inbound records and
+  // deliberately tags their project-scoped route as "shared". The exact sender
+  // and service checks above remain mandatory; dedicated routes still require
+  // the configured assigned number.
+  const routedPhone = space['phone']
+  return routedPhone === config.assignedPhoneNumber || routedPhone === SPECTRUM_SHARED_PHONE
 }
 
 function adaptSpectrum(

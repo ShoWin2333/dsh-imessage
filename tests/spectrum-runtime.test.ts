@@ -45,6 +45,22 @@ describe('Spectrum ingress policy', () => {
     expect(acceptsInboundMessage(inbound({ space: { type: 'group', phone: '+14155550000' } }), connectionConfig)).toBe(false)
     expect(acceptsInboundMessage(inbound({ content: { type: 'attachment', url: 'private' } }), connectionConfig)).toBe(false)
   })
+
+  it('accepts Spectrum shared-line records only for the configured sender route', () => {
+    const shared = { type: 'dm', phone: 'shared' }
+    expect(acceptsInboundMessage(inbound({ space: shared }), connectionConfig)).toBe(true)
+    expect(acceptsInboundMessage(inbound({
+      sender: { address: '+14155559999', service: 'iMessage' },
+      space: shared,
+    }), connectionConfig)).toBe(false)
+    expect(acceptsInboundMessage(inbound({
+      sender: { address: '+14155552671', service: 'SMS' },
+      space: shared,
+    }), connectionConfig)).toBe(false)
+    expect(acceptsInboundMessage(inbound({
+      space: { type: 'group', phone: 'shared' },
+    }), connectionConfig)).toBe(false)
+  })
 })
 
 describe('SpectrumSupervisor', () => {

@@ -10,7 +10,7 @@ Security invariants enforced by code and tests include:
 
 - tokens, project secrets, and device codes remain host-only;
 - Photon fetches reject redirects and cross-origin requests/responses;
-- only the configured sender → assigned hosted-line iMessage DM route is accepted;
+- only the configured sender's inbound iMessage DM route is accepted; dedicated routes verify the exact assigned recipient, while shared routes rely on Photon's project-scoped delivery because Spectrum exposes only its `shared` recipient sentinel;
 - authorization failures and unknown internal failures are converted to stable redacted errors;
 - approvals and questions are claimed only for an exact correlated iMessage turn and fail closed when delivery is unhealthy;
 - disconnect never deletes Photon cloud resources.
