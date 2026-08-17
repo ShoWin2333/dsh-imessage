@@ -19,6 +19,14 @@ dsh web
 
 DSH forwards `plugin ... add` to the profile package manager. Stable releases will use the unqualified package name; while the package is alpha, keep the explicit `@alpha` tag so npm never selects a stable version unexpectedly.
 
+If DSH is run through `npx` and `pnpm` is not installed globally, supply both tools for the install command without changing the global environment:
+
+```sh
+npx --yes --package=pnpm@10.33.0 --package=@deepseek-ai/dsh -- \
+  dsh plugin --profile web add dsh-imessage@alpha
+npx --yes @deepseek-ai/dsh web
+```
+
 The matching GitHub Release tarball remains available as a registry-independent fallback:
 
 ```sh
@@ -193,7 +201,7 @@ The configuration can be inspected through the npm CLI:
 npx --yes npm@11.19.0 trust list dsh-imessage
 ```
 
-After one OIDC release succeeds, set the package's npm **Publishing access** to **Require two-factor authentication and disallow tokens**, then revoke any temporary bootstrap token.
+OIDC publishing was verified with `0.1.0-alpha.2`, including npm's SLSA provenance attestation. The package's publishing access is set to **Require two-factor authentication and disallow tokens**, and the temporary bootstrap CLI session was logged out afterward.
 
 Before promoting alpha to beta, run a Photon staging smoke test with a real hosted line: authorize, create/reuse `dsh`, provision/reuse a sender, send an inbound prompt, answer an approval and question, exercise `/new`, `/sessions`, `/switch`, stop/restart DSH, confirm replay deduplication, reauthorize after token expiry, and disconnect while verifying the Photon project/users remain.
 
