@@ -1,6 +1,6 @@
 # Photon iMessage for DeepSeek Harness
 
-`dsh-imessage` adds a Photon-hosted iMessage transport and a **Settings → iMessage** page to the DeepSeek Harness web profile. A user authorizes Photon with device login, saves the phone number they will send from, and receives a hosted iMessage number to text. Messages from that exact route become DSH prompts and final DSH answers are sent back over iMessage.
+`dsh-imessage` adds a [Photon](https://photon.codes)-hosted iMessage transport and a **Settings → iMessage** page to the DeepSeek Harness web profile. A user authorizes Photon with device login, saves the phone number they will send from, and receives a hosted iMessage number to text. Messages from that exact route become DSH prompts and final DSH answers are sent back over iMessage.
 
 The initial compatibility target is:
 
