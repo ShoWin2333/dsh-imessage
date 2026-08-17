@@ -4,11 +4,14 @@ import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-api-remotes/client'
 import { TYPERT_REMOTE } from 'dsh-photon-imessage/remote'
 import { ImessageSettingsController } from './controller.js'
+import { inject, settingsInject } from './injections.js'
 import {
   ImessageSettingsSection,
   type ImessageSettingsInjected,
 } from './ImessageSettingsSection.js'
 import { installStyles } from './styles.js'
+
+export { inject, settingsInject } from './injections.js'
 
 export type {
   ImessageClientSnapshot,
@@ -17,12 +20,6 @@ export type {
   ImessageSettingsInjected,
   ImessageSettingsSectionProps,
 } from './ImessageSettingsSection.js'
-
-/** The parent only needs the mount service; the nested face is created by apply(). */
-export const inject = ['remote']
-
-/** Services consumed after the generated Remote contribution has mounted. */
-export const settingsInject = ['slots', 'remote.dshPhotonImessage']
 
 /** Mount the generated RPC contribution and register Settings > iMessage. */
 export async function apply(ctx: ClientContext): Promise<() => Promise<void>> {

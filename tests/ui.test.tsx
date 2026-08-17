@@ -6,7 +6,7 @@ import userEvent from '@testing-library/user-event'
 import type { ImessagePluginState, MutationResult } from '../src/types.js'
 import { ImessageSettingsController } from '../src/client/controller.js'
 import { ImessageSettingsSection } from '../src/client/ImessageSettingsSection.js'
-import { inject, settingsInject } from '../src/client/index.js'
+import { inject, settingsInject } from '../src/client/injections.js'
 
 afterEach(() => {
   cleanup()
