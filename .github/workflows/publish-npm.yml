@@ -1,0 +1,74 @@
+name: Publish to npm
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: npm-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish package with npm Trusted Publishing
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+
+      # Trusted Publishing requires npm 11.5.1 or newer. Pin the release CLI so
+      # the OIDC exchange does not depend on the npm version bundled with Node.
+      - name: Install release npm CLI
+        run: npm install --global npm@11.19.0
+
+      - run: npm ci --legacy-peer-deps --ignore-scripts
+      - run: npm run check
+
+      - name: Verify tag and select npm dist-tag
+        id: package
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          node <<'NODE'
+          const { appendFileSync } = require('node:fs')
+          const { name, version } = require('./package.json')
+
+          const expectedTag = `v${version}`
+          if (process.env.RELEASE_TAG !== expectedTag) {
+            console.error(`Tag ${process.env.RELEASE_TAG} does not match package version ${version}.`)
+            process.exit(1)
+          }
+
+          const prerelease = version.includes('-') ? version.split('-', 2)[1] : undefined
+          const requestedChannel = prerelease?.split('.', 1)[0]
+          const supportedChannels = new Set(['alpha', 'beta', 'rc', 'next', 'canary'])
+          const distTag = requestedChannel
+            ? supportedChannels.has(requestedChannel) ? requestedChannel : 'next'
+            : 'latest'
+
+          appendFileSync(process.env.GITHUB_OUTPUT, `name=${name}\nversion=${version}\ndist_tag=${distTag}\n`)
+          console.log(`Publishing ${name}@${version} with npm dist-tag ${distTag}.`)
+          NODE
+
+      - name: Publish to npm with provenance
+        env:
+          PACKAGE_NAME: ${{ steps.package.outputs.name }}
+          PACKAGE_VERSION: ${{ steps.package.outputs.version }}
+          NPM_DIST_TAG: ${{ steps.package.outputs.dist_tag }}
+        shell: bash
+        run: |
+          if npm view "${PACKAGE_NAME}@${PACKAGE_VERSION}" version >/dev/null 2>&1; then
+            echo "${PACKAGE_NAME}@${PACKAGE_VERSION} is already published; nothing to do."
+            exit 0
+          fi
+          npm publish --ignore-scripts --access public --tag "${NPM_DIST_TAG}"

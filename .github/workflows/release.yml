@@ -72,7 +72,7 @@ jobs:
             release create "${GITHUB_REF_NAME}" "${ARCHIVE}"
             --verify-tag
             --generate-notes
-            --title "dsh-photon-imessage ${VERSION}"
+            --title "dsh-imessage ${VERSION}"
           )
           if [[ "${PRERELEASE}" == "true" ]]; then
             args+=(--prerelease)

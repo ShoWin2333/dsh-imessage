@@ -12,7 +12,7 @@ import { WorkspaceAnalyzer, WorkspaceTypertGenerator } from '@deepseek-ai/dsh-ty
 
 const projectRoot = resolve(import.meta.dirname, '..')
 const workspace = mkdtempSync(join(projectRoot, '.typert-workspace-'))
-const packageRoot = join(workspace, 'packages', 'dsh-photon-imessage')
+const packageRoot = join(workspace, 'packages', 'dsh-imessage')
 const protocolRoot = join(workspace, 'packages', 'dsh-typert-protocol')
 
 try {
@@ -79,22 +79,22 @@ export declare function Remote(exportName: string): RemoteDecorator
     },
     files: [],
     references: [
-      { path: './packages/dsh-photon-imessage/tsconfig.json' },
+      { path: './packages/dsh-imessage/tsconfig.json' },
       { path: './packages/dsh-typert-protocol/tsconfig.json' },
     ],
   }, null, 2)}\n`)
 
   const generator = new WorkspaceTypertGenerator(workspace)
   const discovered = generator.discover(['host'])
-  const artifacts = generator.generate(['dsh-photon-imessage'], ['host'])
-  const artifact = artifacts.find(candidate => candidate.package === 'dsh-photon-imessage' && candidate.face === 'host')
+  const artifacts = generator.generate(['dsh-imessage'], ['host'])
+  const artifact = artifacts.find(candidate => candidate.package === 'dsh-imessage' && candidate.face === 'host')
   if (artifact === undefined) {
     const model = new WorkspaceAnalyzer({
       root: workspace,
-      packages: ['dsh-photon-imessage'],
+      packages: ['dsh-imessage'],
       faces: ['host'],
     }).analyze()
-    throw new Error(`Typert did not emit dsh-photon-imessage host exports: ${JSON.stringify({
+    throw new Error(`Typert did not emit dsh-imessage host exports: ${JSON.stringify({
       discovered,
       artifacts,
       faces: model.faces.map(face => ({

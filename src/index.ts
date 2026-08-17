@@ -77,7 +77,7 @@ export { authorizeDevice } from './device-auth.js'
 export { ensureDshProject, ensureSharedUser } from './photon-management.js'
 
 /** Cordis plugin name. */
-export const name = 'dsh-photon-imessage'
+export const name = 'dsh-imessage'
 
 /** Required DSH host services. */
 export const inject = [
@@ -187,7 +187,7 @@ export class DshPhotonImessageService extends TypertRemoteService {
       await this.inboundTail.catch(() => {})
       await router.close()
       await domain.close()
-    }, 'dsh-photon-imessage.teardown')
+    }, 'dsh-imessage.teardown')
   }
 
   /** Read the complete redacted settings-page state. */

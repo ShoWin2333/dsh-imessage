@@ -1,17 +1,17 @@
 {
-  "name": "dsh-photon-imessage",
-  "version": "0.1.0-alpha.0",
+  "name": "dsh-imessage",
+  "version": "0.1.0-alpha.1",
   "description": "Photon-hosted iMessage transport and configuration UI for DeepSeek Harness",
   "type": "module",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/photon-hq/dsh-photon-imessage.git"
+    "url": "git+https://github.com/photon-hq/dsh-imessage.git"
   },
   "bugs": {
-    "url": "https://github.com/photon-hq/dsh-photon-imessage/issues"
+    "url": "https://github.com/photon-hq/dsh-imessage/issues"
   },
-  "homepage": "https://github.com/photon-hq/dsh-photon-imessage#readme",
+  "homepage": "https://github.com/photon-hq/dsh-imessage#readme",
   "keywords": [
     "deepseek-harness",
     "dsh",

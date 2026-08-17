@@ -1,6 +1,6 @@
 # Photon iMessage for DeepSeek Harness
 
-`dsh-photon-imessage` adds a Photon-hosted iMessage transport and a **Settings → iMessage** page to the DeepSeek Harness web profile. A user authorizes Photon with device login, saves the phone number they will send from, and receives a hosted iMessage number to text. Messages from that exact route become DSH prompts and final DSH answers are sent back over iMessage.
+`dsh-imessage` adds a Photon-hosted iMessage transport and a **Settings → iMessage** page to the DeepSeek Harness web profile. A user authorizes Photon with device login, saves the phone number they will send from, and receives a hosted iMessage number to text. Messages from that exact route become DSH prompts and final DSH answers are sent back over iMessage.
 
 This package is alpha software. The initial compatibility target is:
 
@@ -13,14 +13,14 @@ This package is alpha software. The initial compatibility target is:
 Install the current alpha from its GitHub Release, then start DSH from the workspace its iMessage sessions should use:
 
 ```sh
-dsh plugin --profile web add https://github.com/photon-hq/dsh-photon-imessage/releases/download/v0.1.0-alpha.0/dsh-photon-imessage-0.1.0-alpha.0.tgz
+dsh plugin --profile web add https://github.com/photon-hq/dsh-imessage/releases/download/v0.1.0-alpha.1/dsh-imessage-0.1.0-alpha.1.tgz
 dsh web
 ```
 
 DSH forwards `plugin ... add` to the profile package manager, so the release tarball is installed into the web profile just like a registry package. After this package is published to npm, the shorter ecosystem-standard command will be:
 
 ```sh
-dsh plugin --profile web add dsh-photon-imessage
+dsh plugin --profile web add dsh-imessage
 ```
 
 For a local checkout or packed prerelease:
@@ -29,7 +29,7 @@ For a local checkout or packed prerelease:
 npm ci --legacy-peer-deps
 npm run build
 npm pack
-dsh plugin --profile web add ./dsh-photon-imessage-0.1.0-alpha.0.tgz
+dsh plugin --profile web add ./dsh-imessage-0.1.0-alpha.1.tgz
 ```
 
 Open **Settings → iMessage** and complete the three cards:
@@ -123,8 +123,8 @@ Defaults are host-only and are not exposed in the settings page:
 Override the bundle row in the web profile’s `cordis.patch.yml`. DSH patch overrides replace the complete row, so preserve both `id` and `name`:
 
 ```yaml
-- id: dsh-photon-imessage
-  name: dsh-photon-imessage
+- id: dsh-imessage
+  name: dsh-imessage
   config:
     interactionTimeoutMs: 900000
     maxOutboundChars: 3000
@@ -161,7 +161,7 @@ The test suite covers device-flow backoff/cancellation, secret redaction, projec
 
 ## Releasing
 
-The tag-driven [release workflow](https://github.com/photon-hq/dsh-photon-imessage/actions/workflows/release.yml) verifies that the tag exactly matches `package.json`, runs the full check, packs the built plugin, and attaches the installable `.tgz` to a GitHub Release. Versions containing a prerelease suffix are marked as prereleases automatically. The workflow needs only GitHub's built-in token.
+The tag-driven [release workflow](https://github.com/photon-hq/dsh-imessage/actions/workflows/release.yml) verifies that the tag exactly matches `package.json`, runs the full check, packs the built plugin, and attaches the installable `.tgz` to a GitHub Release. Versions containing a prerelease suffix are marked as prereleases automatically. The workflow needs only GitHub's built-in token.
 
 To cut a later prerelease, update and validate the package version on `main`, then push its matching tag:
 
@@ -170,7 +170,41 @@ npm version prerelease --preid alpha
 git push origin main --follow-tags
 ```
 
-Publishing the same artifact to npm remains the preferred long-term DSH distribution path. Configure npm Trusted Publishing for this repository before adding npm publication; do not add a long-lived npm token solely for releases.
+Publishing the same artifact to npm remains the preferred long-term DSH distribution path. The one-time package bootstrap and Trusted Publisher setup are documented below; do not add a long-lived npm token solely for releases.
+
+The repository includes a separate [npm publishing workflow](https://github.com/photon-hq/dsh-imessage/actions/workflows/publish-npm.yml). It uses npm Trusted Publishing with GitHub OIDC, publishes prereleases under their matching `alpha`, `beta`, or `rc` dist-tag, and reserves `latest` for stable versions. No `NPM_TOKEN` is used.
+
+Because npm requires a package to exist before it can have a Trusted Publisher, a maintainer must bootstrap the chosen package name exactly once:
+
+```sh
+npm login
+npm ci --legacy-peer-deps --ignore-scripts
+npm run check
+npm publish --ignore-scripts --access public --tag alpha
+```
+
+Then configure its npm Trusted Publisher with these exact values:
+
+| Field | Value |
+|---|---|
+| Provider | GitHub Actions |
+| Organization | `photon-hq` |
+| Repository | `dsh-imessage` |
+| Workflow filename | `publish-npm.yml` |
+| Environment | blank |
+| Allowed action | `npm publish` |
+
+The equivalent npm CLI command, when authenticated with 2FA enabled, is:
+
+```sh
+npx --yes npm@11.19.0 trust github dsh-imessage \
+  --repo photon-hq/dsh-imessage \
+  --file publish-npm.yml \
+  --allow-publish \
+  --yes
+```
+
+After one OIDC release succeeds, set the package's npm **Publishing access** to **Require two-factor authentication and disallow tokens**, then revoke any temporary bootstrap token.
 
 Before promoting alpha to beta, run a Photon staging smoke test with a real hosted line: authorize, create/reuse `dsh`, provision/reuse a sender, send an inbound prompt, answer an approval and question, exercise `/new`, `/sessions`, `/switch`, stop/restart DSH, confirm replay deduplication, reauthorize after token expiry, and disconnect while verifying the Photon project/users remain.
 

@@ -5,7 +5,7 @@ import type {
   PublicPluginError,
 } from '../types.js'
 // Pulls the generated namespace declaration into TypertClientRemote.
-import type {} from 'dsh-photon-imessage/remote'
+import type {} from 'dsh-imessage/remote'
 
 type ImessageRemote = TypertClientRemote['dshPhotonImessage']
 

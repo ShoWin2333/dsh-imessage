@@ -1,4 +1,4 @@
-const STYLE_ID = 'dsh-photon-imessage-styles'
+const STYLE_ID = 'dsh-imessage-styles'
 let users = 0
 
 /** Install the client bundle's self-contained settings styles. */

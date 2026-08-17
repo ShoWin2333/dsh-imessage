@@ -7,7 +7,7 @@ import { parseTrailingJsonArray } from './pack-report.mjs'
 
 const execute = promisify(execFile)
 const projectRoot = resolve(import.meta.dirname, '..')
-const temporary = await mkdtemp(join(tmpdir(), 'dsh-photon-imessage-profile-'))
+const temporary = await mkdtemp(join(tmpdir(), 'dsh-imessage-profile-'))
 const packDirectory = join(temporary, 'pack')
 const dshHome = join(temporary, 'home')
 const dshBinary = process.env.DSH_BIN ?? 'dsh'
@@ -26,10 +26,10 @@ try {
   await execute(dshBinary, ['plugin', '--profile', 'web', 'add', tarball], { env })
   const manifestPath = join(dshHome, 'profiles', 'web', 'package.json')
   const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
-  if (typeof manifest.dependencies?.['dsh-photon-imessage'] !== 'string') {
-    throw new Error('the disposable web profile did not install dsh-photon-imessage')
+  if (typeof manifest.dependencies?.['dsh-imessage'] !== 'string') {
+    throw new Error('the disposable web profile did not install dsh-imessage')
   }
-  if (!manifest.dsh?.profile?.bundles?.includes('dsh-photon-imessage')) {
+  if (!manifest.dsh?.profile?.bundles?.includes('dsh-imessage')) {
     throw new Error('the disposable web profile did not activate the plugin bundle')
   }
 

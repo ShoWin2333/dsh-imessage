@@ -20,4 +20,4 @@ export const PHOTON_DEVICE_SCOPE = 'openid profile email'
 export const DEVICE_GRANT_TYPE = 'urn:ietf:params:oauth:grant-type:device_code'
 
 /** Plugin identifier used in DSH message provenance. */
-export const PLUGIN_ID = 'dsh-photon-imessage'
+export const PLUGIN_ID = 'dsh-imessage'

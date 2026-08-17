@@ -1,6 +1,6 @@
 import { defineConfig } from 'tsdown'
 
-const ID = 'dsh-photon-imessage'
+const ID = 'dsh-imessage'
 const EXTERNALS = [
   'react',
   'react/jsx-runtime',

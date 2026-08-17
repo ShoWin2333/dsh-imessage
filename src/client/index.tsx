@@ -2,7 +2,7 @@ import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 // These type-only imports merge the settings slot and generated Remote faces.
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-api-remotes/client'
-import { TYPERT_REMOTE } from 'dsh-photon-imessage/remote'
+import { TYPERT_REMOTE } from 'dsh-imessage/remote'
 import { ImessageSettingsController } from './controller.js'
 import { inject, settingsInject } from './injections.js'
 import {
