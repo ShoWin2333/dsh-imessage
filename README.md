@@ -10,11 +10,17 @@ This package is alpha software. The initial compatibility target is:
 
 ## Install
 
-Install the bundle into the DSH web profile, then start DSH from the workspace its iMessage sessions should use:
+Install the current alpha from its GitHub Release, then start DSH from the workspace its iMessage sessions should use:
+
+```sh
+dsh plugin --profile web add https://github.com/photon-hq/dsh-photon-imessage/releases/download/v0.1.0-alpha.0/dsh-photon-imessage-0.1.0-alpha.0.tgz
+dsh web
+```
+
+DSH forwards `plugin ... add` to the profile package manager, so the release tarball is installed into the web profile just like a registry package. After this package is published to npm, the shorter ecosystem-standard command will be:
 
 ```sh
 dsh plugin --profile web add dsh-photon-imessage
-dsh web
 ```
 
 For a local checkout or packed prerelease:
@@ -152,6 +158,19 @@ DSH_BIN=/path/to/dsh npm run test:profile
 ```
 
 The test suite covers device-flow backoff/cancellation, secret redaction, project/user idempotency and ambiguity, staged phone replacement, ingress filters, durable replay deduplication, reconnects, Unicode chunking, exact turn ownership, approval/question fail-closed behavior, session defaults/filtering/handle ownership, and the interactive settings UI. CI runs the suite, packed-artifact checks, and a disposable DSH web-profile installation on Node 22 and 24.
+
+## Releasing
+
+The tag-driven [release workflow](https://github.com/photon-hq/dsh-photon-imessage/actions/workflows/release.yml) verifies that the tag exactly matches `package.json`, runs the full check, packs the built plugin, and attaches the installable `.tgz` to a GitHub Release. Versions containing a prerelease suffix are marked as prereleases automatically. The workflow needs only GitHub's built-in token.
+
+To cut a later prerelease, update and validate the package version on `main`, then push its matching tag:
+
+```sh
+npm version prerelease --preid alpha
+git push origin main --follow-tags
+```
+
+Publishing the same artifact to npm remains the preferred long-term DSH distribution path. Configure npm Trusted Publishing for this repository before adding npm publication; do not add a long-lived npm token solely for releases.
 
 Before promoting alpha to beta, run a Photon staging smoke test with a real hosted line: authorize, create/reuse `dsh`, provision/reuse a sender, send an inbound prompt, answer an approval and question, exercise `/new`, `/sessions`, `/switch`, stop/restart DSH, confirm replay deduplication, reauthorize after token expiry, and disconnect while verifying the Photon project/users remain.
 
