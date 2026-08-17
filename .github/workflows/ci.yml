@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Node ${{ matrix.node }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22.19.0', '24']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+      - run: npm ci --legacy-peer-deps --ignore-scripts
+      - run: npm test
+      - run: npm run build
+      - run: npm run audit:prod
+      - run: npm pack --dry-run --ignore-scripts
+      # dsh@rc.6 currently resolves dsh-app-boot@rc.7 through its own caret.
+      # Those two boot dependencies are peer-only there, so name them explicitly
+      # in the disposable CLI used solely for packed-profile validation.
+      - name: Install isolated DSH rc.6 smoke CLI
+        run: >-
+          npm install --prefix "$RUNNER_TEMP/dsh-rc6"
+          @deepseek-ai/dsh@0.1.0-rc.6
+          @deepseek-ai/cordis-plugin-group@^1.0.1
+          @deepseek-ai/dsh-invariants@^0.1.0-rc.6
+          --legacy-peer-deps --ignore-scripts
+      - name: Install packed plugin into a disposable web profile
+        run: DSH_BIN="$RUNNER_TEMP/dsh-rc6/node_modules/.bin/dsh" npm run test:profile
