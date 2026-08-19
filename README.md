@@ -85,7 +85,7 @@ The browser receives only public account/project/line metadata, authorization UR
 
 Every iMessage prompt is correlated by its exact DSH `UserMessage.id` and only becomes owned after DSH claims that message for a turn. Assistant output, approvals, and questions are forwarded only for that claimed turn. Browser-originated turns in the same adopted session remain in the browser. Approval delivery failure, an unhealthy listener, cancellation, or timeout fails closed.
 
-Only the final assistant answer is delivered. Intermediate reasoning, tool activity, and partial output remain in DSH. Long answers are split near paragraph, line, or word boundaries without splitting Unicode grapheme clusters. Spectrum typing state remains active while the DSH turn runs.
+Only the final assistant answer is delivered. Intermediate reasoning, tool activity, and partial output remain in DSH. Answers are converted from markdown to plain text before delivery, so formatting markers do not arrive raw over iMessage; fenced code blocks and inline code keep their exact contents. Long answers are split near paragraph, line, or word boundaries without splitting Unicode grapheme clusters. Spectrum typing state remains active while the DSH turn runs.
 
 ## Photon authorization and resources
 
@@ -107,6 +107,7 @@ When the management token expires, the stored project secret can continue routin
 
 - One Photon account, one sending phone number, and one assigned hosted line per plugin instance.
 - Text-only direct iMessage conversations in v1.
+- Outbound answers are plain text: markdown formatting is stripped, while code blocks are preserved verbatim.
 - Attachments, reactions, group chats, SMS, and RCS are ignored.
 - Project name is fixed to the exact string `dsh`.
 - All same-workspace root DSH sessions are visible to `/sessions` and `/switch`.

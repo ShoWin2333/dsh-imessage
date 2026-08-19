@@ -14,6 +14,7 @@ import { SessionId, type SessionEvent, type SessionHeader } from '@deepseek-ai/d
 import type {} from '@deepseek-ai/dsh-session-persistence'
 import { chunkText } from './chunks.js'
 import { parseCommand, type ParsedCommand } from './commands.js'
+import { markdownToPlainText } from './plaintext.js'
 import { PLUGIN_ID } from './constants.js'
 import { PluginError, publicError } from './errors.js'
 import { InteractionBroker } from './interactions.js'
@@ -511,11 +512,14 @@ function installSelection(agentCtx: Context, selection: ModelSelection): void {
 }
 
 function assistantText(content: readonly unknown[]): string {
-  return content.flatMap(block => {
+  const text = content.flatMap(block => {
     if (!block || typeof block !== 'object') return []
     const record = block as Record<string, unknown>
     return record['type'] === 'text' && typeof record['text'] === 'string' ? [record['text']] : []
   }).join('')
+  // iMessage is text-only: deliver the answer as plain text instead of raw
+  // markdown markers. Commands and errors are authored plain and never pass here.
+  return markdownToPlainText(text)
 }
 
 function assertNoArguments(command: ParsedCommand): void {

@@ -3,6 +3,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { Agent, AgentHandle } from '@deepseek-ai/dsh-agent'
 import { SessionId, type SessionEvent, type SessionHeader } from '@deepseek-ai/dsh-session'
 import { SessionRouter, type ActiveSessionStore } from '../src/session-router.js'
+import type { SpectrumInboundMessage } from '../src/spectrum-runtime.js'
 
 interface FakeContextOptions {
   roots?: Agent[]
@@ -29,6 +30,8 @@ function fakeAgent(id: string, meta = header(id), status: 'idle' | 'running' = '
     id,
     status,
     session: { header: meta },
+    followup: vi.fn(),
+    inbox: { remove: vi.fn() },
   } as unknown as Agent
 }
 
@@ -180,5 +183,34 @@ describe('DSH session lifecycle policy', () => {
     await expect(privateRouter.assertSwitchAllowed()).rejects.toMatchObject({ code: 'busy' })
     privateRouter.pendingPromptCount = 0
     await expect(privateRouter.assertSwitchAllowed()).rejects.toMatchObject({ code: 'busy' })
+  })
+
+  it('delivers the final assistant answer as plain text, converting markdown', async () => {
+    const { ctx, raw, created } = fakeContext()
+    const instance = router(ctx, activeStore())
+    const calls = raw.on.mock.calls as unknown as [string, (payload: never) => void][]
+    const handlers = new Map<string, (payload: never) => void>(calls)
+
+    const channel = {
+      id: 'provider-message',
+      text: 'hello',
+      responding: async (callback: () => void) => callback(),
+      send: vi.fn(async () => {}),
+    } as unknown as SpectrumInboundMessage
+    void instance.receive(channel)
+
+    const followup = (created as unknown as { followup: ReturnType<typeof vi.fn> }).followup
+    await vi.waitFor(() => { expect(followup).toHaveBeenCalled() })
+    const messageId = followup.mock.calls[0]?.[0]?.id
+
+    handlers.get('agent/inbox/claimed')?.({ agent: created, message: { id: messageId }, turn: 1 })
+    handlers.get('session/event')?.({ id: created.id }, {
+      type: 'assistant/message',
+      data: { turn: 1, message: { content: [{ type: 'text', text: '**bold** and `code`' }] } },
+    })
+    handlers.get('session/event')?.({ id: created.id }, { type: 'turn/end', data: { turn: 1 } })
+
+    await vi.waitFor(() => { expect(channel.send).toHaveBeenCalled() })
+    expect(channel.send).toHaveBeenCalledWith('bold and code')
   })
 })
