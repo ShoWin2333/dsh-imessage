@@ -26,10 +26,13 @@ import {
   type Config,
   type PluginSettings,
   type ResolvedConfig,
+  type RouteSettings,
 } from './config.js'
 import {
+  findProjectCredential,
   parsePhotonCredential,
   serializePhotonCredential,
+  upsertProjectCredential,
   type PhotonCredential,
 } from './credential.js'
 import { CREDENTIAL_NAME, SETTINGS_NAME } from './constants.js'
@@ -46,14 +49,17 @@ import {
   ensureSharedUser,
 } from './photon-management.js'
 import { normalizeE164 } from './phone.js'
-import { SessionRouter } from './session-router.js'
+import { RouteManager } from './route-manager.js'
 import {
-  createSpectrumConnection,
-  SpectrumSupervisor,
-  type SpectrumInboundMessage,
-} from './spectrum-runtime.js'
-import { pluginDomainSpec } from './storage.js'
-import { normalizePhotonProjectName, resolveWorkspaceCwd } from './workspace.js'
+  createRouteSettings,
+  normalizeRoutes,
+  removeRouteFromList,
+  routeDisplayLabel,
+  settingsFromRoutes,
+  upsertRouteList,
+} from './routes.js'
+import type { SpectrumInboundMessage } from './spectrum-runtime.js'
+import { pluginDomainSpec, readActiveSession, writeActiveSessions } from './storage.js'
 import type {
   AuthorizationView,
   DisconnectRequest,
@@ -61,10 +67,14 @@ import type {
   MutationResult,
   PhotonAccountView,
   ProvisioningView,
-  RuntimeView,
+  RemoveRouteRequest,
+  RetryRouteRuntimeRequest,
   SavePhoneRequest,
+  SaveRoutePhoneRequest,
   SaveWorkspaceRequest,
+  UpsertRouteRequest,
 } from './types.js'
+import { normalizePhotonProjectName, resolveWorkspaceCwd } from './workspace.js'
 
 export type * from './types.js'
 export { normalizeE164 } from './phone.js'
@@ -78,6 +88,7 @@ export { TurnCorrelation } from './turn-correlation.js'
 export { authorizeDevice } from './device-auth.js'
 export { ensureDshProject, ensureSharedUser } from './photon-management.js'
 export { normalizePhotonProjectName, resolveWorkspaceCwd } from './workspace.js'
+export { normalizeRoutes, createRouteSettings } from './routes.js'
 
 /** Cordis plugin name. */
 export const name = 'dsh-imessage'
@@ -115,16 +126,13 @@ export class DshPhotonImessageService extends TypertRemoteService {
   private settingsScope?: SettingsScope<PluginSettings>
   private domain?: PluginDomain
   private inbound?: InboundTable
-  private router?: SessionRouter
-  private spectrum?: SpectrumSupervisor
+  private routes?: RouteManager
   private authorizationOverride: AuthorizationView | undefined
   private provisioning: ProvisioningView = { phase: 'idle' }
-  private runtime: RuntimeView = { phase: 'stopped' }
   private authController: AbortController | undefined
   private authTask: Promise<void> | undefined
   private authGeneration = 0
   private provisionTail = Promise.resolve()
-  private inboundTail = Promise.resolve()
 
   /** Construct the host service; async resources open in Service.init. */
   constructor(ctx: Context, config: Config = {}) {
@@ -142,51 +150,43 @@ export class DshPhotonImessageService extends TypertRemoteService {
     this.domain = domain
     this.inbound = domain.table('inbound')
 
-    const settings = this.settingsScope.get()
-    let workspaceCwd = process.cwd()
-    try {
-      workspaceCwd = await resolveWorkspaceCwd(settings.workspaceCwd)
-    } catch {
-      // A stale absolute path from another machine must not block plugin startup.
-      workspaceCwd = process.cwd()
-    }
-    const router = new SessionRouter(this.ctx, {
-      get: () => domain.global.get().activeSessionId,
-      set: async activeSessionId => {
-        await domain.global.set(activeSessionId === undefined ? {} : { activeSessionId })
+    const routes = new RouteManager(
+      this.ctx,
+      this.config,
+      routeId => ({
+        get: () => readActiveSession(domain.global.get(), routeId),
+        set: async sessionId => {
+          const current = domain.global.get()
+          await domain.global.set(writeActiveSessions(current, routeId, sessionId))
+        },
+      }),
+      async (routeId, message) => {
+        const table = this.requireInboundTable()
+        if (!await rememberInbound(table, message.id, this.config.dedupeEntries)) return
+        await this.requireRoutes().require(routeId).router.receive(message)
       },
-    }, {
-      cwd: workspaceCwd,
-      sessionsPerPage: this.config.sessionsPerPage,
-      maxOutboundChars: this.config.maxOutboundChars,
-      interactionTimeoutMs: this.config.interactionTimeoutMs,
-    })
-    this.router = router
+    )
+    this.routes = routes
 
-    const spectrum = new SpectrumSupervisor(createSpectrumConnection, {
-      reconnectMinMs: this.config.reconnectMinMs,
-      reconnectMaxMs: this.config.reconnectMaxMs,
-      onState: state => {
-        this.runtime = state
-        router.setRuntimeHealthy(state.phase === 'listening')
-      },
-      onMessage: message => this.receiveSpectrumMessage(message),
-    })
-    this.spectrum = spectrum
+    const settingsRoutes = normalizeRoutes(this.settingsScope.get())
+    for (const route of settingsRoutes) await routes.ensureBinding(route)
 
     const credential = await this.resolveCredential()
     if (credential !== undefined) {
-      this.provisioning = {
-        phase: 'ready',
-        project: { id: credential.project.id, name: credential.project.name },
-      }
-      const settings = this.requireSettings().get()
-      if (settings.phoneNumber !== undefined && settings.assignedPhoneNumber !== undefined) {
-        void spectrum.restart({
-          projectId: credential.project.id,
-          projectSecret: credential.project.secret,
-          senderPhoneNumber: settings.phoneNumber,
-          assignedPhoneNumber: settings.assignedPhoneNumber,
+      const primary = credential.projects[0]
+      this.provisioning = primary === undefined
+        ? { phase: 'idle' }
+        : { phase: 'ready', project: { id: primary.id, name: primary.name } }
+      for (const route of settingsRoutes) {
+        const project = findProjectCredential(credential, route.photonProjectName)
+        if (project === undefined || route.phoneNumber === undefined || route.assignedPhoneNumber === undefined) {
+          continue
+        }
+        void routes.startRoute(route, {
+          projectId: project.id,
+          projectSecret: project.secret,
+          senderPhoneNumber: route.phoneNumber,
+          assignedPhoneNumber: route.assignedPhoneNumber,
         })
       }
     }
@@ -194,9 +194,7 @@ export class DshPhotonImessageService extends TypertRemoteService {
     this.ctx.effect(() => async () => {
       this.authGeneration += 1
       this.authController?.abort(new DOMException('Plugin stopped', 'AbortError'))
-      await spectrum.stop()
-      await this.inboundTail.catch(() => {})
-      await router.close()
+      await routes.close()
       await domain.close()
     }, 'dsh-imessage.teardown')
   }
@@ -207,8 +205,7 @@ export class DshPhotonImessageService extends TypertRemoteService {
     const descriptor = this.settingsDescriptor()
     const credentialInfo = await this.ctx.credentials.describe(PHOTON_CREDENTIAL_REF)
     const credential = await this.resolveCredential(false)
-    const settings = this.requireSettings().get()
-    const activeSessionId = this.requireDomain().global.get().activeSessionId
+    const settingsRoutes = normalizeRoutes(this.requireSettings().get())
     return {
       revision: descriptor.revision,
       settingsWritable: this.ctx.settings.writable,
@@ -216,99 +213,122 @@ export class DshPhotonImessageService extends TypertRemoteService {
       credentialWritable: credentialInfo.writable,
       authorization: this.authorizationView(credential),
       provisioning: this.provisioning,
-      runtime: this.runtime,
-      workspaceCwd: this.requireRouter().cwd,
-      photonProjectName: normalizePhotonProjectName(settings.photonProjectName),
-      ...(settings.phoneNumber === undefined ? {} : { phoneNumber: settings.phoneNumber }),
-      ...(settings.assignedPhoneNumber === undefined
-        ? {}
-        : { assignedPhoneNumber: settings.assignedPhoneNumber }),
-      ...(activeSessionId === undefined ? {} : { activeSessionId }),
+      routes: await this.requireRoutes().project(settingsRoutes),
     }
   }
 
-  /** Persist the local workspace and Photon project name used by this machine. */
-  @Remote('saveWorkspace')
-  async saveWorkspace(request: SaveWorkspaceRequest): Promise<MutationResult> {
+  /** Persist one route's local workspace and Photon project name. */
+  @Remote('upsertRoute')
+  async upsertRoute(request: UpsertRouteRequest): Promise<MutationResult> {
     return this.mutation(() => this.enqueueProvision(async () => {
       await this.requireWritablePlanes()
       this.assertRevision(request.expectedRevision)
       const workspaceCwd = await resolveWorkspaceCwd(request.workspaceCwd)
       const photonProjectName = normalizePhotonProjectName(request.photonProjectName)
-      const current = this.requireSettings().get()
-      const cwdChanged = workspaceCwd !== this.requireRouter().cwd
-      const projectChanged = photonProjectName !== normalizePhotonProjectName(current.photonProjectName)
-
-      const nextSettings: PluginSettings = {
-        ...current,
-        workspaceCwd,
-        photonProjectName,
+      const currentRoutes = normalizeRoutes(this.requireSettings().get())
+      const existing = request.id === undefined
+        ? undefined
+        : currentRoutes.find(route => route.id === request.id)
+      if (request.id !== undefined && existing === undefined) {
+        throw new PluginError('invalid-command', 'That iMessage route no longer exists. Refresh and try again.')
       }
 
-      // Always persist local routing first. Photon project switching is best-effort
-      // afterward so a flaky list/create call cannot block cwd configuration.
-      await this.ctx.settings.update(SETTINGS_NAMESPACE, nextSettings, request.expectedRevision)
-      this.requireRouter().setCwd(workspaceCwd)
-      if (cwdChanged) await this.requireRouter().reset()
+      const duplicateProject = currentRoutes.find(route => (
+        route.photonProjectName === photonProjectName && route.id !== request.id
+      ))
+      if (duplicateProject !== undefined) {
+        throw new PluginError(
+          'invalid-project-name',
+          `Photon project "${photonProjectName}" is already used by route "${routeDisplayLabel(duplicateProject)}".`,
+        )
+      }
 
-      const managementCredential = projectChanged
+      const nextRoute = createRouteSettings({
+        ...(existing?.id !== undefined ? { id: existing.id } : {}),
+        ...(request.label !== undefined
+          ? { label: request.label }
+          : existing?.label !== undefined ? { label: existing.label } : {}),
+        workspaceCwd,
+        photonProjectName,
+        ...(existing?.phoneNumber !== undefined ? { phoneNumber: existing.phoneNumber } : {}),
+        ...(existing?.assignedPhoneNumber !== undefined
+          ? { assignedPhoneNumber: existing.assignedPhoneNumber }
+          : {}),
+        ...(existing?.photonUserId !== undefined ? { photonUserId: existing.photonUserId } : {}),
+      })
+      const projectChanged = existing !== undefined
+        && existing.photonProjectName !== nextRoute.photonProjectName
+      const nextRoutes = upsertRouteList(currentRoutes, nextRoute)
+
+      await this.ctx.settings.replace(
+        SETTINGS_NAMESPACE,
+        settingsFromRoutes(nextRoutes),
+        request.expectedRevision,
+      )
+      await this.requireRoutes().ensureBinding(nextRoute)
+
+      const managementCredential = projectChanged || existing === undefined
         ? await this.resolveCredential()
         : undefined
-      const canSwitchProject = managementCredential !== undefined
+      const canProvision = managementCredential !== undefined
         && managementCredential.accessTokenExpiresAt > Date.now()
-      if (!projectChanged || !canSwitchProject) return
+      if (!canProvision) return
 
       this.provisioning = { phase: 'project' }
       const api = createPhotonManagementApi(
         managementCredential.apiOrigin,
         managementCredential.accessToken,
       )
-      let prepared: Awaited<ReturnType<SpectrumSupervisor['prepare']>> | undefined
       try {
-        const project = await ensureDshProject(api, undefined, photonProjectName)
-        let phoneFields: Pick<PluginSettings, 'phoneNumber' | 'assignedPhoneNumber' | 'photonUserId'> = {}
-        if (current.phoneNumber !== undefined) {
+        const project = await ensureDshProject(
+          api,
+          findProjectCredential(managementCredential, photonProjectName)?.id,
+          photonProjectName,
+        )
+        let phoneFields: Pick<RouteSettings, 'phoneNumber' | 'assignedPhoneNumber' | 'photonUserId'> = {}
+        if (nextRoute.phoneNumber !== undefined) {
           this.provisioning = { phase: 'user' }
           const user = await ensureSharedUser(
             api,
             project.id,
-            current.phoneNumber,
+            nextRoute.phoneNumber,
             accountView(managementCredential.account),
           )
           phoneFields = {
-            phoneNumber: current.phoneNumber,
+            phoneNumber: nextRoute.phoneNumber,
             assignedPhoneNumber: user.assignedPhoneNumber,
             photonUserId: user.id,
           }
         }
 
-        const nextCredential: PhotonCredential = {
-          ...managementCredential,
-          project: { id: project.id, name: project.name, secret: project.secret },
-        }
-        const connectionConfig = phoneFields.phoneNumber === undefined
-          || phoneFields.assignedPhoneNumber === undefined
+        const nextCredential = upsertProjectCredential(managementCredential, {
+          id: project.id,
+          name: project.name,
+          secret: project.secret,
+        })
+        const provisionedRoute = createRouteSettings({ ...nextRoute, ...phoneFields })
+        const connectionConfig = provisionedRoute.phoneNumber === undefined
+          || provisionedRoute.assignedPhoneNumber === undefined
           ? undefined
           : {
             projectId: project.id,
             projectSecret: project.secret,
-            senderPhoneNumber: phoneFields.phoneNumber,
-            assignedPhoneNumber: phoneFields.assignedPhoneNumber,
+            senderPhoneNumber: provisionedRoute.phoneNumber,
+            assignedPhoneNumber: provisionedRoute.assignedPhoneNumber,
           }
-        prepared = connectionConfig === undefined
+        const prepared = connectionConfig === undefined
           ? undefined
-          : await this.requireSpectrum().prepare(connectionConfig)
+          : (await this.requireRoutes().prepareRoute(provisionedRoute, connectionConfig)).prepared
 
         const oldCredentialValue = (await this.ctx.credentials.resolve(PHOTON_CREDENTIAL_REF))?.value
         const switchRevision = this.settingsDescriptor().revision
         try {
           await this.ctx.credentials.set(PHOTON_CREDENTIAL_REF, serializePhotonCredential(nextCredential))
-          if (Object.keys(phoneFields).length > 0) {
-            await this.ctx.settings.update(SETTINGS_NAMESPACE, {
-              ...this.requireSettings().get(),
-              ...phoneFields,
-            }, switchRevision)
-          }
+          await this.ctx.settings.replace(
+            SETTINGS_NAMESPACE,
+            settingsFromRoutes(upsertRouteList(nextRoutes, provisionedRoute)),
+            switchRevision,
+          )
         } catch (error) {
           if (prepared !== undefined) await prepared.stop().catch(() => {})
           if (oldCredentialValue === undefined) await this.ctx.credentials.unset(PHOTON_CREDENTIAL_REF)
@@ -320,20 +340,52 @@ export class DshPhotonImessageService extends TypertRemoteService {
           phase: 'ready',
           project: { id: project.id, name: project.name },
         }
-        await this.requireRouter().reset()
         if (connectionConfig !== undefined && prepared !== undefined) {
-          await this.requireSpectrum().activate(connectionConfig, prepared)
-          prepared = undefined
-        } else {
-          await this.requireSpectrum().stop()
+          await this.requireRoutes().activateRoute(provisionedRoute.id, connectionConfig, prepared)
         }
       } catch (error) {
-        if (prepared !== undefined) await prepared.stop().catch(() => {})
         const safe = publicError(error)
         this.provisioning = { phase: 'failed', error: safe }
         throw error
       }
     }))
+  }
+
+  /** Remove one local route without deleting Photon cloud resources. */
+  @Remote('removeRoute')
+  async removeRoute(request: RemoveRouteRequest): Promise<MutationResult> {
+    return this.mutation(() => this.enqueueProvision(async () => {
+      await this.requireWritablePlanes()
+      this.assertRevision(request.expectedRevision)
+      const currentRoutes = normalizeRoutes(this.requireSettings().get())
+      if (currentRoutes.length <= 1) {
+        throw new PluginError('invalid-command', 'Keep at least one iMessage route, or use Disconnect.')
+      }
+      if (!currentRoutes.some(route => route.id === request.routeId)) {
+        throw new PluginError('invalid-command', 'That iMessage route no longer exists. Refresh and try again.')
+      }
+      const nextRoutes = removeRouteFromList(currentRoutes, request.routeId)
+      await this.ctx.settings.replace(
+        SETTINGS_NAMESPACE,
+        settingsFromRoutes(nextRoutes),
+        request.expectedRevision,
+      )
+      await this.requireRoutes().disposeRoute(request.routeId)
+      const domain = this.requireDomain()
+      await domain.global.set(writeActiveSessions(domain.global.get(), request.routeId, undefined))
+    }))
+  }
+
+  /** @deprecated Prefer upsertRoute; updates the first/default route. */
+  @Remote('saveWorkspace')
+  async saveWorkspace(request: SaveWorkspaceRequest): Promise<MutationResult> {
+    const primary = normalizeRoutes(this.requireSettings().get())[0]
+    return this.upsertRoute({
+      ...(primary?.id !== undefined ? { id: primary.id } : {}),
+      workspaceCwd: request.workspaceCwd,
+      photonProjectName: request.photonProjectName,
+      expectedRevision: request.expectedRevision,
+    })
   }
 
   /** Start Photon CLI-compatible device authorization and return once its code is available. */
@@ -414,41 +466,64 @@ export class DshPhotonImessageService extends TypertRemoteService {
     })
   }
 
-  /** Provision or reuse the configured sending number with optimistic concurrency. */
-  @Remote('savePhone')
-  async savePhone(request: SavePhoneRequest): Promise<MutationResult> {
+  /** Provision or reuse the sending number for one route. */
+  @Remote('saveRoutePhone')
+  async saveRoutePhone(request: SaveRoutePhoneRequest): Promise<MutationResult> {
     return this.mutation(() => this.enqueueProvision(async () => {
       await this.requireWritablePlanes()
       this.assertRevision(request.expectedRevision)
       const phoneNumber = normalizeE164(request.phoneNumber)
+      const currentRoutes = normalizeRoutes(this.requireSettings().get())
+      const route = currentRoutes.find(candidate => candidate.id === request.routeId)
+      if (route === undefined) {
+        throw new PluginError('invalid-command', 'That iMessage route no longer exists. Refresh and try again.')
+      }
       const credential = await this.requireManagementCredential()
-      this.provisioning = { phase: 'user' }
+      this.provisioning = { phase: 'project' }
       const api = createPhotonManagementApi(credential.apiOrigin, credential.accessToken)
-      let prepared: Awaited<ReturnType<SpectrumSupervisor['prepare']>> | undefined
+      const project = await ensureDshProject(
+        api,
+        findProjectCredential(credential, route.photonProjectName)?.id,
+        route.photonProjectName,
+      )
+      this.provisioning = { phase: 'user' }
+      let prepared: Awaited<ReturnType<RouteManager['prepareRoute']>>['prepared'] | undefined
       try {
         const user = await ensureSharedUser(
           api,
-          credential.project.id,
+          project.id,
           phoneNumber,
           accountView(credential.account),
         )
         const connectionConfig = {
-          projectId: credential.project.id,
-          projectSecret: credential.project.secret,
+          projectId: project.id,
+          projectSecret: project.secret,
           senderPhoneNumber: phoneNumber,
           assignedPhoneNumber: user.assignedPhoneNumber,
         }
-        prepared = await this.requireSpectrum().prepare(connectionConfig)
-        await this.ctx.settings.update(SETTINGS_NAMESPACE, {
+        const provisionedRoute = createRouteSettings({
+          ...route,
           phoneNumber,
           assignedPhoneNumber: user.assignedPhoneNumber,
           photonUserId: user.id,
-        }, request.expectedRevision)
+        })
+        prepared = (await this.requireRoutes().prepareRoute(provisionedRoute, connectionConfig)).prepared
+        const nextCredential = upsertProjectCredential(credential, {
+          id: project.id,
+          name: project.name,
+          secret: project.secret,
+        })
+        await this.ctx.credentials.set(PHOTON_CREDENTIAL_REF, serializePhotonCredential(nextCredential))
+        await this.ctx.settings.replace(
+          SETTINGS_NAMESPACE,
+          settingsFromRoutes(upsertRouteList(currentRoutes, provisionedRoute)),
+          request.expectedRevision,
+        )
         this.provisioning = {
           phase: 'ready',
-          project: { id: credential.project.id, name: credential.project.name },
+          project: { id: project.id, name: project.name },
         }
-        await this.requireSpectrum().activate(connectionConfig, prepared)
+        await this.requireRoutes().activateRoute(provisionedRoute.id, connectionConfig, prepared)
         prepared = undefined
       } catch (error) {
         if (prepared !== undefined) await prepared.stop().catch(() => {})
@@ -457,6 +532,22 @@ export class DshPhotonImessageService extends TypertRemoteService {
         throw error
       }
     }))
+  }
+
+  /** @deprecated Prefer saveRoutePhone; updates the first/default route. */
+  @Remote('savePhone')
+  async savePhone(request: SavePhoneRequest): Promise<MutationResult> {
+    const primary = normalizeRoutes(this.requireSettings().get())[0]
+    if (primary === undefined) {
+      return this.mutation(async () => {
+        throw new PluginError('invalid-command', 'Create an iMessage route before saving a phone number.')
+      })
+    }
+    return this.saveRoutePhone({
+      routeId: primary.id,
+      phoneNumber: request.phoneNumber,
+      expectedRevision: request.expectedRevision,
+    })
   }
 
   /** Clear local routing/config/credentials while preserving Photon cloud resources. */
@@ -475,33 +566,49 @@ export class DshPhotonImessageService extends TypertRemoteService {
         throw error
       }
 
-      await this.requireSpectrum().stop()
-      await this.inboundTail.catch(() => {})
-      await this.requireRouter().reset()
+      await this.requireRoutes().resetAll()
       const table = this.requireInboundTable()
       for (const key of [...table.keys()]) await table.delete(key)
+      await this.requireDomain().global.set({})
       this.authorizationOverride = undefined
       this.provisioning = { phase: 'idle' }
-      this.runtime = { phase: 'stopped' }
     }))
   }
 
-  /** Retry Spectrum using the currently provisioned project and line. */
-  @Remote('retryRuntime')
-  async retryRuntime(): Promise<MutationResult> {
+  /** Retry Spectrum for one route. */
+  @Remote('retryRouteRuntime')
+  async retryRouteRuntime(request: RetryRouteRuntimeRequest): Promise<MutationResult> {
     return this.mutation(async () => {
       const credential = await this.resolveCredential()
-      const settings = this.requireSettings().get()
-      if (credential === undefined || settings.phoneNumber === undefined || settings.assignedPhoneNumber === undefined) {
+      const route = normalizeRoutes(this.requireSettings().get())
+        .find(candidate => candidate.id === request.routeId)
+      if (credential === undefined || route === undefined
+        || route.phoneNumber === undefined || route.assignedPhoneNumber === undefined) {
         throw new PluginError('runtime-failed', 'Authorize Photon and save a phone number before retrying iMessage.')
       }
-      await this.requireSpectrum().restart({
-        projectId: credential.project.id,
-        projectSecret: credential.project.secret,
-        senderPhoneNumber: settings.phoneNumber,
-        assignedPhoneNumber: settings.assignedPhoneNumber,
+      const project = findProjectCredential(credential, route.photonProjectName)
+      if (project === undefined) {
+        throw new PluginError('runtime-failed', 'Save the route workspace again to provision its Photon project.')
+      }
+      await this.requireRoutes().startRoute(route, {
+        projectId: project.id,
+        projectSecret: project.secret,
+        senderPhoneNumber: route.phoneNumber,
+        assignedPhoneNumber: route.assignedPhoneNumber,
       })
     })
+  }
+
+  /** @deprecated Prefer retryRouteRuntime; retries the first/default route. */
+  @Remote('retryRuntime')
+  async retryRuntime(): Promise<MutationResult> {
+    const primary = normalizeRoutes(this.requireSettings().get())[0]
+    if (primary === undefined) {
+      return this.mutation(async () => {
+        throw new PluginError('runtime-failed', 'Create an iMessage route before retrying the listener.')
+      })
+    }
+    return this.retryRouteRuntime({ routeId: primary.id })
   }
 
   private async completeAuthorization(
@@ -515,56 +622,71 @@ export class DshPhotonImessageService extends TypertRemoteService {
     this.provisioning = { phase: 'project' }
     const management = createPhotonManagementApi(this.config.photonApiOrigin, result.accessToken)
     const oldCredential = await this.resolveCredential(false)
-    const projectName = normalizePhotonProjectName(this.requireSettings().get().photonProjectName)
-    const project = await ensureDshProject(management, oldCredential?.project.id, projectName)
-    assertAuthorizationActive(generation, this.authGeneration, signal)
+    const currentRoutes = normalizeRoutes(this.requireSettings().get())
+    const projects = []
+    const nextRoutes: RouteSettings[] = []
 
-    const currentSettings = this.requireSettings().get()
-    let nextSettings: PluginSettings | undefined
-    if (currentSettings.phoneNumber !== undefined) {
+    for (const route of currentRoutes) {
+      assertAuthorizationActive(generation, this.authGeneration, signal)
+      const project = await ensureDshProject(
+        management,
+        findProjectCredential(
+          oldCredential ?? {
+            version: 2,
+            apiOrigin: this.config.photonApiOrigin,
+            accessToken: result.accessToken,
+            accessTokenExpiresAt: result.expiresAt,
+            account: result.account,
+            projects: [],
+          },
+          route.photonProjectName,
+        )?.id,
+        route.photonProjectName,
+      )
+      projects.push({ id: project.id, name: project.name, secret: project.secret })
+
+      if (route.phoneNumber === undefined) {
+        nextRoutes.push(route)
+        continue
+      }
       this.provisioning = { phase: 'user' }
       const user = await ensureSharedUser(
         management,
         project.id,
-        currentSettings.phoneNumber,
+        route.phoneNumber,
         result.account,
       )
-      nextSettings = {
-        phoneNumber: currentSettings.phoneNumber,
+      nextRoutes.push(createRouteSettings({
+        ...route,
+        phoneNumber: route.phoneNumber,
         assignedPhoneNumber: user.assignedPhoneNumber,
         photonUserId: user.id,
-      }
+      }))
     }
     assertAuthorizationActive(generation, this.authGeneration, signal)
 
+    if (projects.length === 0) {
+      const fallback = await ensureDshProject(management, oldCredential?.projects[0]?.id, 'dsh')
+      projects.push({ id: fallback.id, name: fallback.name, secret: fallback.secret })
+    }
+
     const credential: PhotonCredential = {
-      version: 1,
+      version: 2,
       apiOrigin: this.config.photonApiOrigin,
       accessToken: result.accessToken,
       accessTokenExpiresAt: result.expiresAt,
       account: result.account,
-      project: { id: project.id, name: project.name, secret: project.secret },
+      projects,
     }
-    const connectionConfig = nextSettings?.phoneNumber === undefined
-      || nextSettings.assignedPhoneNumber === undefined
-      ? undefined
-      : {
-        projectId: project.id,
-        projectSecret: project.secret,
-        senderPhoneNumber: nextSettings.phoneNumber,
-        assignedPhoneNumber: nextSettings.assignedPhoneNumber,
-      }
-    const prepared = connectionConfig === undefined
-      ? undefined
-      : await this.requireSpectrum().prepare(connectionConfig)
+
     try {
       await this.ctx.credentials.set(PHOTON_CREDENTIAL_REF, serializePhotonCredential(credential))
-      // Even an authorization with no phone fields performs an empty settings
-      // write so the optimistic revision is checked at the serialized write
-      // boundary before the new credential becomes authoritative.
-      await this.ctx.settings.update(SETTINGS_NAMESPACE, nextSettings ?? {}, expectedRevision)
+      await this.ctx.settings.replace(
+        SETTINGS_NAMESPACE,
+        settingsFromRoutes(nextRoutes.length > 0 ? nextRoutes : currentRoutes),
+        expectedRevision,
+      )
     } catch (error) {
-      if (prepared !== undefined) await prepared.stop().catch(() => {})
       if (oldCredentialValue === undefined) await this.ctx.credentials.unset(PHOTON_CREDENTIAL_REF)
       else await this.ctx.credentials.set(PHOTON_CREDENTIAL_REF, oldCredentialValue)
       throw error
@@ -572,20 +694,23 @@ export class DshPhotonImessageService extends TypertRemoteService {
     assertAuthorizationActive(generation, this.authGeneration, signal)
 
     this.authorizationOverride = undefined
-    this.provisioning = { phase: 'ready', project: { id: project.id, name: project.name } }
-    if (connectionConfig !== undefined && prepared !== undefined) {
-      await this.requireSpectrum().activate(connectionConfig, prepared)
+    this.provisioning = {
+      phase: 'ready',
+      project: { id: projects[0]!.id, name: projects[0]!.name },
     }
-  }
 
-  private async receiveSpectrumMessage(message: SpectrumInboundMessage): Promise<void> {
-    const result = this.inboundTail.then(async () => {
-      const table = this.requireInboundTable()
-      if (!await rememberInbound(table, message.id, this.config.dedupeEntries)) return
-      await this.requireRouter().receive(message)
-    })
-    this.inboundTail = result.catch(() => {})
-    return result
+    for (const route of nextRoutes) {
+      const project = projects.find(candidate => candidate.name === route.photonProjectName)
+      if (project === undefined || route.phoneNumber === undefined || route.assignedPhoneNumber === undefined) {
+        continue
+      }
+      await this.requireRoutes().startRoute(route, {
+        projectId: project.id,
+        projectSecret: project.secret,
+        senderPhoneNumber: route.phoneNumber,
+        assignedPhoneNumber: route.assignedPhoneNumber,
+      })
+    }
   }
 
   private authorizationView(credential: PhotonCredential | undefined): AuthorizationView {
@@ -700,14 +825,9 @@ export class DshPhotonImessageService extends TypertRemoteService {
     return this.inbound
   }
 
-  private requireRouter(): SessionRouter {
-    if (this.router === undefined) throw new Error('dsh-imessage router is not initialized')
-    return this.router
-  }
-
-  private requireSpectrum(): SpectrumSupervisor {
-    if (this.spectrum === undefined) throw new Error('dsh-imessage Spectrum runtime is not initialized')
-    return this.spectrum
+  private requireRoutes(): RouteManager {
+    if (this.routes === undefined) throw new Error('dsh-imessage routes are not initialized')
+    return this.routes
   }
 }
 
@@ -724,17 +844,11 @@ function accountView(account: {
 }
 
 function validateSettings(settings: PluginSettings): void {
-  const values = [settings.phoneNumber, settings.assignedPhoneNumber, settings.photonUserId]
-  const present = values.filter(value => value !== undefined).length
-  if (present !== 0 && present !== values.length) {
-    throw new Error('phoneNumber, assignedPhoneNumber, and photonUserId must be stored together')
-  }
-  if (settings.phoneNumber !== undefined) normalizeE164(settings.phoneNumber)
-  if (settings.assignedPhoneNumber !== undefined) normalizeE164(settings.assignedPhoneNumber)
-  if (settings.photonProjectName !== undefined) normalizePhotonProjectName(settings.photonProjectName)
-  if (settings.workspaceCwd !== undefined && settings.workspaceCwd.trim().length > 0) {
-    if (!settings.workspaceCwd.includes('\0') && !isAbsolutePathShape(settings.workspaceCwd)) {
-      throw new Error('workspaceCwd must be an absolute path when set')
+  for (const route of normalizeRoutes(settings)) {
+    if (route.workspaceCwd !== undefined && route.workspaceCwd.trim().length > 0) {
+      if (!route.workspaceCwd.includes('\0') && !isAbsolutePathShape(route.workspaceCwd)) {
+        throw new Error('workspaceCwd must be an absolute path when set')
+      }
     }
   }
 }

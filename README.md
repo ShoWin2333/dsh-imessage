@@ -36,14 +36,14 @@ npm pack
 dsh plugin --profile web add ./dsh-imessage-*.tgz
 ```
 
-Open **Settings → iMessage** and complete the cards:
+Open **Settings → iMessage** and complete setup:
 
 1. Select **Authorize**. The browser opens a blank window immediately, then navigates it to Photon after DSH receives the device code. If popups are blocked, use the displayed link and copyable code.
-2. Optionally set the **local project directory** and **Photon project name**, then save. Leave the directory blank to use the `dsh web` process working directory. Leave the Photon name blank to use `dsh`. Use a distinct Photon project name on each machine so hosted lines do not collide.
-3. Enter the E.164 number you will text from, such as `+14155552671`, and save it.
-4. Copy or text the assigned hosted iMessage number shown in the final card.
+2. Configure one or more **routes**. Each route has a local project directory, a Photon project name, and a sending number. Leave the directory blank to use the `dsh web` process working directory. Leave the Photon name blank to use `dsh`. Use a distinct Photon project name per route (and per machine) so hosted lines do not collide.
+3. Save each route, then save the E.164 number you will text from (the same personal number can be reused across routes).
+4. Copy or text the assigned hosted iMessage number shown for that route.
 
-The plugin ensures a Photon project with the configured name (default `dsh`). It reuses the stored accessible project first when that project still has the same name, otherwise reuses the sole exact case-sensitive match, and creates a US/iMessage project only when none exists. Multiple exact projects or users are reported with their public IDs for manual resolution; the plugin never chooses arbitrarily.
+The plugin ensures a Photon project for each configured route name (default `dsh`). It reuses the stored accessible project first when that project still has the same name, otherwise reuses the sole exact case-sensitive match, and creates a US/iMessage project only when none exists. Multiple exact projects or users are reported with their public IDs for manual resolution; the plugin never chooses arbitrarily.
 
 ## Commands
 
@@ -79,8 +79,8 @@ The listener accepts only inbound text messages for which all of the following a
 Unauthorized traffic is ignored without a reply. The plugin does not log message content, raw phone numbers, device codes, access tokens, or project secrets. It stores:
 
 - non-secret phone/user/line configuration in the DSH settings namespace `dsh-imessage`;
-- one atomic opaque credential at `DSH_IMESSAGE_PHOTON_CREDENTIALS`, containing the management token, public account/project identifiers, and the Spectrum project secret;
-- the selected session ID and a durable bounded window of 1,024 inbound provider message IDs in the `dsh_imessage` storage domain.
+- one atomic opaque credential at `DSH_IMESSAGE_PHOTON_CREDENTIALS`, containing the management token, public account identifiers, and Spectrum project secrets for every configured route;
+- selected session IDs per route and a durable bounded window of 1,024 inbound provider message IDs in the `dsh_imessage` storage domain.
 
 The browser receives only public account/project/line metadata, authorization URLs and user code, revisions, health, and credential availability flags. Device codes and tokens stay on the host. Photon HTTP calls are pinned to one configured origin and reject redirects or cross-origin responses.
 
@@ -106,12 +106,12 @@ When the management token expires, the stored project secret can continue routin
 
 ## Limitations
 
-- One Photon account, one sending phone number, and one assigned hosted line per plugin instance.
-- Local workspace directory and Photon project name are configurable in **Settings → iMessage**; defaults remain `process.cwd()` and `dsh`.
+- One Photon account per plugin instance; multiple iMessage routes are supported, each with its own Photon project, local workspace, and hosted line.
+- The same personal sending number can be reused across routes; each route still receives its own hosted line.
 - Text-only direct iMessage conversations in v1.
 - Outbound answers are plain text: markdown formatting is stripped, while code blocks are preserved verbatim.
 - Attachments, reactions, group chats, SMS, and RCS are ignored.
-- All same-workspace root DSH sessions are visible to `/sessions` and `/switch`.
+- Same-workspace root DSH sessions for a route are visible to `/sessions` and `/switch` for that route's cwd.
 - No automatic cleanup of Photon cloud resources.
 
 ## Host configuration

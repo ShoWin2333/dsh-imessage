@@ -10,12 +10,12 @@ import { normalizeE164 } from '../src/phone.js'
 import { createSecureFetch } from '../src/secure-fetch.js'
 
 const credential: PhotonCredential = {
-  version: 1,
+  version: 2,
   apiOrigin: 'https://app.photon.codes',
   accessToken: 'management-token-secret',
   accessTokenExpiresAt: 2_000_000_000_000,
   account: { id: 'account-1', email: 'user@example.com', name: 'Dsh User' },
-  project: { id: 'project-1', name: 'dsh', secret: 'project-secret' },
+  projects: [{ id: 'project-1', name: 'dsh', secret: 'project-secret' }],
 }
 
 describe('public primitives', () => {
@@ -37,9 +37,17 @@ describe('public primitives', () => {
 
   it('round-trips the one opaque credential and redacts unknown failures', () => {
     expect(parsePhotonCredential(serializePhotonCredential(credential))).toEqual(credential)
-    const safe = publicError(new Error(`failure ${credential.accessToken} ${credential.project.secret}`))
+    expect(parsePhotonCredential(JSON.stringify({
+      version: 1,
+      apiOrigin: 'https://app.photon.codes',
+      accessToken: 'management-token-secret',
+      accessTokenExpiresAt: 2_000_000_000_000,
+      account: { id: 'account-1', email: 'user@example.com', name: 'Dsh User' },
+      project: { id: 'project-1', name: 'dsh', secret: 'project-secret' },
+    }))).toEqual(credential)
+    const safe = publicError(new Error(`failure ${credential.accessToken} ${credential.projects[0]?.secret}`))
     expect(JSON.stringify(safe)).not.toContain(credential.accessToken)
-    expect(JSON.stringify(safe)).not.toContain(credential.project.secret)
+    expect(JSON.stringify(safe)).not.toContain(credential.projects[0]?.secret)
     expect(safe.code).toBe('internal-error')
   })
 

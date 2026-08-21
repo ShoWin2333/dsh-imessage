@@ -13,7 +13,17 @@ type ImessageRemote = TypertClientRemote['dshPhotonImessage']
 export interface ImessageClientSnapshot {
   phase: 'idle' | 'loading' | 'ready' | 'error'
   state?: ImessagePluginState
-  pendingAction?: 'authorize' | 'cancel' | 'save-workspace' | 'save-phone' | 'disconnect' | 'retry-runtime'
+  pendingAction?:
+    | 'authorize'
+    | 'cancel'
+    | 'upsert-route'
+    | 'remove-route'
+    | 'save-route-phone'
+    | 'disconnect'
+    | 'retry-route-runtime'
+    | 'save-workspace'
+    | 'save-phone'
+    | 'retry-runtime'
   error?: PublicPluginError
 }
 
@@ -86,22 +96,33 @@ export class ImessageSettingsController {
     return this.mutate('cancel', () => this.remote.cancelAuthorization())
   }
 
-  /** Persist the local workspace directory and Photon project name. */
-  saveWorkspace(
-    workspaceCwd: string,
-    photonProjectName: string,
-    expectedRevision: number,
-  ): Promise<MutationResult | undefined> {
-    return this.mutate('save-workspace', () => this.remote.saveWorkspace({
-      workspaceCwd,
-      photonProjectName,
-      expectedRevision,
-    }))
+  /** Create or update one local route. */
+  upsertRoute(input: {
+    id?: string
+    label?: string
+    workspaceCwd: string
+    photonProjectName: string
+    expectedRevision: number
+  }): Promise<MutationResult | undefined> {
+    return this.mutate('upsert-route', () => this.remote.upsertRoute(input))
   }
 
-  /** Validate/provision one sender and its hosted line. */
-  savePhone(phoneNumber: string, expectedRevision: number): Promise<MutationResult | undefined> {
-    return this.mutate('save-phone', () => this.remote.savePhone({ phoneNumber, expectedRevision }))
+  /** Remove one local route. */
+  removeRoute(routeId: string, expectedRevision: number): Promise<MutationResult | undefined> {
+    return this.mutate('remove-route', () => this.remote.removeRoute({ routeId, expectedRevision }))
+  }
+
+  /** Provision a sender phone for one route. */
+  saveRoutePhone(
+    routeId: string,
+    phoneNumber: string,
+    expectedRevision: number,
+  ): Promise<MutationResult | undefined> {
+    return this.mutate('save-route-phone', () => this.remote.saveRoutePhone({
+      routeId,
+      phoneNumber,
+      expectedRevision,
+    }))
   }
 
   /** Remove local configuration without deleting Photon resources. */
@@ -109,9 +130,9 @@ export class ImessageSettingsController {
     return this.mutate('disconnect', () => this.remote.disconnect({ expectedRevision }))
   }
 
-  /** Restart the local Spectrum listener. */
-  retryRuntime(): Promise<MutationResult | undefined> {
-    return this.mutate('retry-runtime', () => this.remote.retryRuntime())
+  /** Restart one route's Spectrum listener. */
+  retryRouteRuntime(routeId: string): Promise<MutationResult | undefined> {
+    return this.mutate('retry-route-runtime', () => this.remote.retryRouteRuntime({ routeId }))
   }
 
   /** Release browser timers; the generated Remote contribution is owned by apply(). */
@@ -168,8 +189,7 @@ export class ImessageSettingsController {
     const transient = state?.authorization.phase === 'pending'
       || state?.provisioning.phase === 'project'
       || state?.provisioning.phase === 'user'
-      || state?.runtime.phase === 'starting'
-      || state?.runtime.phase === 'retrying'
+      || state?.routes.some(route => route.runtime.phase === 'starting' || route.runtime.phase === 'retrying')
     this.pollTimer = setTimeout(() => { void this.refresh() }, transient ? 1_000 : 5_000)
   }
 

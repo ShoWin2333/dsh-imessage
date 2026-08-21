@@ -8,6 +8,7 @@ import React, {
 import type { SettingsSectionOwnerProps } from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {
   ImessagePluginState,
+  ImessageRouteState,
   PublicPluginError,
   RuntimeView,
 } from '../types.js'
@@ -49,13 +50,13 @@ function Loaded({ controller }: ImessageSettingsInjected): ReactNode {
       <PageHeader />
       {snapshot.error === undefined ? null : <ErrorNotice error={snapshot.error} />}
       <AuthorizationCard controller={controller} state={snapshot.state} pending={snapshot.pendingAction} />
-      <WorkspaceCard controller={controller} state={snapshot.state} pending={snapshot.pendingAction} />
-      <PhoneCard controller={controller} state={snapshot.state} pending={snapshot.pendingAction} />
-      <LineCard controller={controller} state={snapshot.state} pending={snapshot.pendingAction} />
+      <RoutesPanel controller={controller} state={snapshot.state} pending={snapshot.pendingAction} />
       <p className="dsh-imessage-footnote">
-        Only iMessage DMs from your saved number are accepted; Photon scopes shared-line delivery to this
-        project and routes it through the assigned line. Message text and raw phone numbers are not written
-        to plugin logs. Disconnecting removes local routing only; it never deletes Photon projects or users.
+        Each route uses its own Photon project and local workspace directory. The same sender phone can be
+        reused across routes. Only iMessage DMs from your saved number are accepted; Photon scopes
+        shared-line delivery to each project and routes it through the assigned line. Message text and raw
+        phone numbers are not written to plugin logs. Disconnecting clears all local routes; it never deletes
+        Photon projects or users.
       </p>
     </section>
   )
@@ -67,7 +68,7 @@ function PageHeader(): ReactNode {
       <div>
         <p className="dsh-imessage-eyebrow">Photon transport</p>
         <h1>iMessage</h1>
-        <p>Connect a hosted iMessage line to DeepSeek Harness.</p>
+        <p>Connect one or more hosted iMessage lines to DeepSeek Harness.</p>
       </div>
     </header>
   )
@@ -119,8 +120,8 @@ function AuthorizationCard({
       <CardTitle number="1" title="Authorize Photon" status={authorizationLabel(state)} />
       {authorization.phase === 'authorized' ? (
         <p className="dsh-imessage-body">
-          Signed in as <strong>{authorization.account.name ?? authorization.account.email}</strong>. The
-          project is <code>dsh</code>.
+          Signed in as <strong>{authorization.account.name ?? authorization.account.email}</strong>. Each
+          route can use its own Photon project name.
         </p>
       ) : authorization.phase === 'reauthorization-required' ? (
         <p className="dsh-imessage-warning">
@@ -195,7 +196,7 @@ function AuthorizationCard({
   )
 }
 
-function WorkspaceCard({
+function RoutesPanel({
   controller,
   state,
   pending,
@@ -204,45 +205,160 @@ function WorkspaceCard({
   state: ImessagePluginState
   pending: string | undefined
 }): ReactNode {
-  const [cwd, setCwd] = useState(state.workspaceCwd)
-  const [projectName, setProjectName] = useState(state.photonProjectName)
-  const [dirty, setDirty] = useState(false)
-  const trimmedCwd = cwd.trim()
-  const trimmedProject = projectName.trim()
-  const projectValid = trimmedProject.length === 0 || isPhotonProjectName(trimmedProject)
-  const cwdValid = trimmedCwd.length === 0 || looksAbsolutePath(trimmedCwd)
   const canMutate = state.settingsWritable && state.credentialWritable && pending === undefined
 
-  useEffect(() => {
-    if (!dirty) {
-      setCwd(state.workspaceCwd)
-      setProjectName(state.photonProjectName)
-    }
-  }, [dirty, state.workspaceCwd, state.photonProjectName])
+  const addRoute = (): void => {
+    void controller.upsertRoute({
+      label: '',
+      workspaceCwd: '',
+      photonProjectName: `dsh-route-${Date.now().toString(36)}`,
+      expectedRevision: state.revision,
+    })
+  }
 
-  const submit = (event: FormEvent<HTMLFormElement>): void => {
+  const disconnect = (): void => {
+    if (!window.confirm('Disconnect all local iMessage routes? Photon projects and users will be preserved.')) {
+      return
+    }
+    void controller.disconnect(state.revision)
+  }
+
+  return (
+    <div className="dsh-imessage-routes">
+      {state.routes.map(route => (
+        <RouteCard
+          key={route.id}
+          route={route}
+          state={state}
+          controller={controller}
+          pending={pending}
+          canRemove={state.routes.length > 1}
+        />
+      ))}
+      <div className="dsh-imessage-actions">
+        <button
+          type="button"
+          className="dsh-imessage-button dsh-imessage-primary"
+          disabled={!canMutate}
+          onClick={addRoute}
+        >
+          {pending === 'upsert-route' ? 'Adding…' : 'Add route'}
+        </button>
+        <button
+          type="button"
+          className="dsh-imessage-button dsh-imessage-danger"
+          disabled={pending !== undefined || !canMutate}
+          onClick={disconnect}
+        >
+          {pending === 'disconnect' ? 'Disconnecting…' : 'Disconnect all routes'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function RouteCard({
+  route,
+  state,
+  controller,
+  pending,
+  canRemove,
+}: {
+  route: ImessageRouteState
+  state: ImessagePluginState
+  controller: ImessageSettingsController
+  pending: string | undefined
+  canRemove: boolean
+}): ReactNode {
+  const [label, setLabel] = useState(route.label)
+  const [cwd, setCwd] = useState(route.workspaceCwd)
+  const [projectName, setProjectName] = useState(route.photonProjectName)
+  const [phone, setPhone] = useState(route.phoneNumber ?? '')
+  const [routeDirty, setRouteDirty] = useState(false)
+  const [phoneDirty, setPhoneDirty] = useState(false)
+  const [copied, setCopied] = useState(false)
+
+  const trimmedCwd = cwd.trim()
+  const trimmedProject = projectName.trim()
+  const trimmedLabel = label.trim()
+  const normalizedPhone = phone.trim()
+  const projectValid = trimmedProject.length === 0 || isPhotonProjectName(trimmedProject)
+  const cwdValid = trimmedCwd.length === 0 || looksAbsolutePath(trimmedCwd)
+  const phoneValid = isStrictE164(normalizedPhone)
+  const authorized = state.authorization.phase === 'authorized'
+  const projectReady = state.provisioning.phase === 'ready'
+  const canMutate = state.settingsWritable && state.credentialWritable && pending === undefined
+  const assigned = route.assignedPhoneNumber
+  const fieldId = route.id.replace(/[^a-zA-Z0-9_-]/gu, '-')
+  const displayTitle = trimmedLabel.length > 0
+    ? trimmedLabel
+    : route.photonProjectName.length > 0
+      ? route.photonProjectName
+      : 'Unnamed route'
+
+  useEffect(() => {
+    if (!routeDirty) {
+      setLabel(route.label)
+      setCwd(route.workspaceCwd)
+      setProjectName(route.photonProjectName)
+    }
+  }, [routeDirty, route.label, route.workspaceCwd, route.photonProjectName])
+
+  useEffect(() => {
+    if (!phoneDirty) setPhone(route.phoneNumber ?? '')
+  }, [phoneDirty, route.phoneNumber])
+
+  const saveRoute = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault()
     if (!projectValid || !cwdValid) return
-    void controller.saveWorkspace(trimmedCwd, trimmedProject, state.revision).then((result) => {
-      if (result?.ok === true) setDirty(false)
+    void controller.upsertRoute({
+      id: route.id,
+      label: trimmedLabel,
+      workspaceCwd: trimmedCwd,
+      photonProjectName: trimmedProject,
+      expectedRevision: state.revision,
+    }).then((result) => {
+      if (result?.ok === true) setRouteDirty(false)
     })
+  }
+
+  const savePhone = (event: FormEvent<HTMLFormElement>): void => {
+    event.preventDefault()
+    if (!phoneValid) return
+    void controller.saveRoutePhone(route.id, normalizedPhone, state.revision).then((result) => {
+      if (result?.ok === true) setPhoneDirty(false)
+    })
+  }
+
+  const removeRoute = (): void => {
+    if (!window.confirm('Remove this route? Local routing for this line will be cleared. Photon projects and users will be preserved.')) {
+      return
+    }
+    void controller.removeRoute(route.id, state.revision)
   }
 
   return (
     <article className="dsh-imessage-card">
-      <CardTitle
-        number="2"
-        title="Choose workspace routing"
-        status={dirty ? 'Unsaved' : 'Configured'}
-      />
-      <p className="dsh-imessage-body">
-        Point this machine at a local project directory and a Photon project name.
-        Use a distinct Photon project name per machine so hosted lines do not collide.
-      </p>
-      <form className="dsh-imessage-form" onSubmit={submit}>
-        <label htmlFor="dsh-imessage-cwd">Local project directory</label>
+      <CardTitle title={displayTitle} status={runtimeLabel(route.runtime)} />
+      <form className="dsh-imessage-form" onSubmit={saveRoute}>
+        <label htmlFor={`dsh-imessage-label-${fieldId}`}>Label</label>
         <input
-          id="dsh-imessage-cwd"
+          id={`dsh-imessage-label-${fieldId}`}
+          type="text"
+          spellCheck={false}
+          autoComplete="off"
+          placeholder="Personal line"
+          value={label}
+          disabled={pending !== undefined}
+          onChange={(event) => {
+            setLabel(event.currentTarget.value)
+            setRouteDirty(true)
+          }}
+        />
+        <p className="dsh-imessage-muted">Optional display name for this route.</p>
+        <label htmlFor={`dsh-imessage-cwd-${fieldId}`}>Local project directory</label>
+        <input
+          id={`dsh-imessage-cwd-${fieldId}`}
           type="text"
           spellCheck={false}
           autoComplete="off"
@@ -252,7 +368,7 @@ function WorkspaceCard({
           disabled={pending !== undefined}
           onChange={(event) => {
             setCwd(event.currentTarget.value)
-            setDirty(true)
+            setRouteDirty(true)
           }}
         />
         {cwd.length > 0 && !cwdValid ? (
@@ -260,9 +376,9 @@ function WorkspaceCard({
         ) : (
           <p className="dsh-imessage-muted">Leave blank to use the directory where <code>dsh web</code> was started.</p>
         )}
-        <label htmlFor="dsh-imessage-photon-project">Photon project name</label>
+        <label htmlFor={`dsh-imessage-photon-project-${fieldId}`}>Photon project name</label>
         <input
-          id="dsh-imessage-photon-project"
+          id={`dsh-imessage-photon-project-${fieldId}`}
           type="text"
           spellCheck={false}
           autoComplete="off"
@@ -272,7 +388,7 @@ function WorkspaceCard({
           disabled={pending !== undefined}
           onChange={(event) => {
             setProjectName(event.currentTarget.value)
-            setDirty(true)
+            setRouteDirty(true)
           }}
         />
         {projectName.length > 0 && !projectValid ? (
@@ -288,78 +404,45 @@ function WorkspaceCard({
           <button
             type="submit"
             className="dsh-imessage-button dsh-imessage-primary"
-            disabled={!dirty || !projectValid || !cwdValid || !canMutate}
+            disabled={!routeDirty || !projectValid || !cwdValid || !canMutate}
           >
-            {pending === 'save-workspace' ? 'Saving…' : 'Save workspace'}
+            {pending === 'upsert-route' ? 'Saving…' : 'Save route'}
+          </button>
+          <button
+            type="button"
+            className="dsh-imessage-button dsh-imessage-danger"
+            disabled={!canRemove || !canMutate}
+            onClick={removeRoute}
+          >
+            {pending === 'remove-route' ? 'Removing…' : 'Remove route'}
           </button>
         </div>
       </form>
-    </article>
-  )
-}
 
-function PhoneCard({
-  controller,
-  state,
-  pending,
-}: {
-  controller: ImessageSettingsController
-  state: ImessagePluginState
-  pending: string | undefined
-}): ReactNode {
-  const [phone, setPhone] = useState(state.phoneNumber ?? '')
-  const [dirty, setDirty] = useState(false)
-  const normalized = phone.trim()
-  const valid = isStrictE164(normalized)
-  const authorized = state.authorization.phase === 'authorized'
-  const projectReady = state.provisioning.phase === 'ready'
-
-  useEffect(() => {
-    if (!dirty) setPhone(state.phoneNumber ?? '')
-  }, [dirty, state.phoneNumber])
-
-  const submit = (event: FormEvent<HTMLFormElement>): void => {
-    event.preventDefault()
-    if (!valid) return
-    void controller.savePhone(normalized, state.revision).then((result) => {
-      if (result?.ok === true) setDirty(false)
-    })
-  }
-
-  return (
-    <article className="dsh-imessage-card">
-      <CardTitle
-        number="3"
-        title="Choose your sending number"
-        status={state.assignedPhoneNumber === undefined ? 'Not configured' : 'Configured'}
-      />
-      <p className="dsh-imessage-body">
-        Enter the personal number that will text Photon’s hosted number. It must be a full E.164 number.
-      </p>
-      <form className="dsh-imessage-form" onSubmit={submit}>
-        <label htmlFor="dsh-imessage-phone">Number you will text from</label>
+      <form className="dsh-imessage-form" onSubmit={savePhone}>
+        <label htmlFor={`dsh-imessage-phone-${fieldId}`}>Number you will text from</label>
         <input
-          id="dsh-imessage-phone"
+          id={`dsh-imessage-phone-${fieldId}`}
           type="tel"
           inputMode="tel"
           autoComplete="tel"
           placeholder="+14155552671"
           value={phone}
-          aria-invalid={phone.length > 0 && !valid}
+          aria-invalid={phone.length > 0 && !phoneValid}
           disabled={pending !== undefined}
           onChange={(event) => {
             setPhone(event.currentTarget.value)
-            setDirty(true)
+            setPhoneDirty(true)
           }}
         />
-        {phone.length > 0 && !valid ? (
+        {phone.length > 0 && !phoneValid ? (
           <p className="dsh-imessage-error">Use “+” followed by 2–15 digits; the first digit cannot be zero.</p>
         ) : null}
         {!authorized ? (
           <p className="dsh-imessage-muted">Authorize Photon before saving a number.</p>
         ) : !projectReady ? (
           <p className="dsh-imessage-muted">
-            The <code>{state.photonProjectName}</code> project is still being prepared.
+            The <code>{route.photonProjectName}</code> project is still being prepared.
           </p>
         ) : null}
         {state.provisioning.phase === 'failed' ? <ErrorNotice error={state.provisioning.error} /> : null}
@@ -367,36 +450,13 @@ function PhoneCard({
           <button
             type="submit"
             className="dsh-imessage-button dsh-imessage-primary"
-            disabled={!valid || !authorized || !projectReady || pending !== undefined
-              || !state.settingsWritable || !state.credentialWritable}
+            disabled={!phoneValid || !authorized || !projectReady || !canMutate}
           >
-            {pending === 'save-phone' ? 'Provisioning…' : 'Save number'}
+            {pending === 'save-route-phone' ? 'Provisioning…' : 'Save number'}
           </button>
         </div>
       </form>
-    </article>
-  )
-}
 
-function LineCard({
-  controller,
-  state,
-  pending,
-}: {
-  controller: ImessageSettingsController
-  state: ImessagePluginState
-  pending: string | undefined
-}): ReactNode {
-  const [copied, setCopied] = useState(false)
-  const assigned = state.assignedPhoneNumber
-  const disconnect = (): void => {
-    if (!window.confirm('Disconnect local iMessage routing? Photon projects and users will be preserved.')) return
-    void controller.disconnect(state.revision)
-  }
-
-  return (
-    <article className="dsh-imessage-card">
-      <CardTitle number="4" title="Text your hosted line" status={runtimeLabel(state.runtime)} />
       {assigned === undefined ? (
         <p className="dsh-imessage-body">Your hosted iMessage number appears here after the sender is saved.</p>
       ) : (
@@ -425,36 +485,28 @@ function LineCard({
             </div>
           </div>
           <dl className="dsh-imessage-health">
-            <div><dt>Listener</dt><dd>{runtimeLabel(state.runtime)}</dd></div>
-            <div><dt>Photon project</dt><dd>{state.photonProjectName}</dd></div>
-            <div><dt>Workspace</dt><dd>{state.workspaceCwd}</dd></div>
-            <div><dt>Active session</dt><dd>{state.activeSessionId ?? 'A new session will be created'}</dd></div>
+            <div><dt>Listener</dt><dd>{runtimeLabel(route.runtime)}</dd></div>
+            <div><dt>Workspace</dt><dd>{route.workspaceCwd}</dd></div>
+            <div><dt>Photon project</dt><dd>{route.photonProjectName}</dd></div>
+            <div><dt>Active session</dt><dd>{route.activeSessionId ?? 'A new session will be created'}</dd></div>
           </dl>
-          {state.runtime.phase === 'failed' ? <ErrorNotice error={state.runtime.error} /> : null}
-          {state.runtime.phase === 'retrying' ? (
+          {route.runtime.phase === 'failed' ? <ErrorNotice error={route.runtime.error} /> : null}
+          {route.runtime.phase === 'retrying' ? (
             <p className="dsh-imessage-muted">
-              Reconnect attempt {state.runtime.attempt} is scheduled for {formatTime(state.runtime.retryAt)}.
+              Reconnect attempt {route.runtime.attempt} is scheduled for {formatTime(route.runtime.retryAt)}.
             </p>
           ) : null}
           <div className="dsh-imessage-actions">
-            {state.runtime.phase === 'failed' || state.runtime.phase === 'stopped' ? (
+            {route.runtime.phase === 'failed' || route.runtime.phase === 'stopped' ? (
               <button
                 type="button"
                 className="dsh-imessage-button"
                 disabled={pending !== undefined}
-                onClick={() => { void controller.retryRuntime() }}
+                onClick={() => { void controller.retryRouteRuntime(route.id) }}
               >
-                {pending === 'retry-runtime' ? 'Starting…' : 'Retry listener'}
+                {pending === 'retry-route-runtime' ? 'Starting…' : 'Retry listener'}
               </button>
             ) : null}
-            <button
-              type="button"
-              className="dsh-imessage-button dsh-imessage-danger"
-              disabled={pending !== undefined || !state.settingsWritable || !state.credentialWritable}
-              onClick={disconnect}
-            >
-              {pending === 'disconnect' ? 'Disconnecting…' : 'Disconnect'}
-            </button>
           </div>
           <CommandReference />
         </>
@@ -463,10 +515,13 @@ function LineCard({
   )
 }
 
-function CardTitle({ number, title, status }: { number: string; title: string; status: string }): ReactNode {
+function CardTitle({ number, title, status }: { number?: string; title: string; status: string }): ReactNode {
   return (
     <div className="dsh-imessage-card-title">
-      <div><span>{number}</span><h2>{title}</h2></div>
+      <div>
+        {number === undefined ? null : <span>{number}</span>}
+        <h2>{title}</h2>
+      </div>
       <small>{status}</small>
     </div>
   )

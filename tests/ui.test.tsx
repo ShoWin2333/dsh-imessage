@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import React from 'react'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import type { ImessagePluginState, MutationResult } from '../src/types.js'
+import type { ImessagePluginState, ImessageRouteState, MutationResult } from '../src/types.js'
 import { ImessageSettingsController } from '../src/client/controller.js'
 import { ImessageSettingsSection } from '../src/client/ImessageSettingsSection.js'
 import { inject, settingsInject } from '../src/client/injections.js'
@@ -13,6 +13,17 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
+function defaultRoute(overrides: Partial<ImessageRouteState> = {}): ImessageRouteState {
+  return {
+    id: 'default',
+    label: 'dsh',
+    workspaceCwd: '/workspace',
+    photonProjectName: 'dsh',
+    runtime: { phase: 'stopped' },
+    ...overrides,
+  }
+}
+
 function pluginState(overrides: Partial<ImessagePluginState> = {}): ImessagePluginState {
   return {
     revision: 7,
@@ -21,9 +32,7 @@ function pluginState(overrides: Partial<ImessagePluginState> = {}): ImessagePlug
     credentialWritable: true,
     authorization: { phase: 'disconnected' },
     provisioning: { phase: 'idle' },
-    runtime: { phase: 'stopped' },
-    workspaceCwd: '/workspace',
-    photonProjectName: 'dsh',
+    routes: [defaultRoute()],
     ...overrides,
   }
 }
@@ -37,10 +46,11 @@ function remote(initial: ImessagePluginState) {
     getState: vi.fn(async () => ({ ok: true as const, value: initial })),
     beginAuthorization: vi.fn(async () => success(initial)),
     cancelAuthorization: vi.fn(async () => success(initial)),
-    saveWorkspace: vi.fn(async () => success(initial)),
-    savePhone: vi.fn(async () => success(initial)),
+    upsertRoute: vi.fn(async () => success(initial)),
+    removeRoute: vi.fn(async () => success(initial)),
+    saveRoutePhone: vi.fn(async () => success(initial)),
     disconnect: vi.fn(async () => success(initial)),
-    retryRuntime: vi.fn(async () => success(initial)),
+    retryRouteRuntime: vi.fn(async () => success(initial)),
   }
 }
 
@@ -102,11 +112,10 @@ describe('Settings > iMessage', () => {
     const initial = pluginState()
     const saved = pluginState({
       revision: 8,
-      workspaceCwd: '/tmp',
-      photonProjectName: 'dsh-laptop-b',
+      routes: [defaultRoute({ workspaceCwd: '/tmp', photonProjectName: 'dsh-laptop-b' })],
     })
     const { api } = renderState(initial)
-    api.saveWorkspace.mockResolvedValue(success(saved))
+    api.upsertRoute.mockResolvedValue(success(saved))
     const user = userEvent.setup()
 
     const cwd = await screen.findByLabelText('Local project directory')
@@ -115,10 +124,12 @@ describe('Settings > iMessage', () => {
     await user.type(cwd, '/tmp')
     await user.clear(project)
     await user.type(project, 'dsh-laptop-b')
-    await user.click(screen.getByRole('button', { name: 'Save workspace' }))
+    await user.click(screen.getByRole('button', { name: 'Save route' }))
 
     await waitFor(() => {
-      expect(api.saveWorkspace).toHaveBeenCalledWith({
+      expect(api.upsertRoute).toHaveBeenCalledWith({
+        id: 'default',
+        label: 'dsh',
         workspaceCwd: '/tmp',
         photonProjectName: 'dsh-laptop-b',
         expectedRevision: 7,
@@ -141,12 +152,14 @@ describe('Settings > iMessage', () => {
     const ready = pluginState({
       ...initial,
       revision: 8,
-      phoneNumber: '+14155552671',
-      assignedPhoneNumber: '+14155550000',
-      runtime: { phase: 'listening', connectedAt: Date.now() },
+      routes: [defaultRoute({
+        phoneNumber: '+14155552671',
+        assignedPhoneNumber: '+14155550000',
+        runtime: { phase: 'listening', connectedAt: Date.now() },
+      })],
     })
     const { api } = renderState(initial)
-    api.savePhone.mockResolvedValue(success(ready))
+    api.saveRoutePhone.mockResolvedValue(success(ready))
     const user = userEvent.setup()
     const input = await screen.findByLabelText('Number you will text from')
 
@@ -158,7 +171,11 @@ describe('Settings > iMessage', () => {
     await user.click(screen.getByRole('button', { name: 'Save number' }))
 
     await waitFor(() => {
-      expect(api.savePhone).toHaveBeenCalledWith({ phoneNumber: '+14155552671', expectedRevision: 7 })
+      expect(api.saveRoutePhone).toHaveBeenCalledWith({
+        routeId: 'default',
+        phoneNumber: '+14155552671',
+        expectedRevision: 7,
+      })
     })
     expect(await screen.findByText('+14155550000')).toBeTruthy()
     expect(screen.getByRole('link', { name: 'Text this number' }).getAttribute('href')).toBe('sms:+14155550000')
@@ -173,8 +190,10 @@ describe('Settings > iMessage', () => {
         account: { id: 'account', email: 'ada@example.com' },
       },
       provisioning: { phase: 'ready', project: { id: 'project', name: 'dsh' } },
-      phoneNumber: '+14155552671',
-      assignedPhoneNumber: '+14155550000',
+      routes: [defaultRoute({
+        phoneNumber: '+14155552671',
+        assignedPhoneNumber: '+14155550000',
+      })],
     })
     renderState(initial)
     expect(await screen.findByText(/Management authorization expired/)).toBeTruthy()
@@ -190,7 +209,7 @@ describe('Settings > iMessage', () => {
       provisioning: { phase: 'ready', project: { id: 'project', name: 'dsh' } },
     })
     const { api } = renderState(authorized)
-    api.savePhone.mockResolvedValue({
+    api.saveRoutePhone.mockResolvedValue({
       ok: true,
       value: {
         ok: false,
@@ -211,30 +230,38 @@ describe('Settings > iMessage', () => {
         phase: 'authorized', account: { id: 'account', email: 'ada@example.com' }, expiresAt: Date.now() + 60_000,
       },
       provisioning: { phase: 'ready', project: { id: 'project', name: 'dsh' } },
-      phoneNumber: '+14155552671',
-      assignedPhoneNumber: '+14155550000',
-      runtime: {
-        phase: 'failed',
-        error: { code: 'runtime-failed', message: 'The hosted line could not connect.' },
-      },
+      routes: [defaultRoute({
+        phoneNumber: '+14155552671',
+        assignedPhoneNumber: '+14155550000',
+        runtime: {
+          phase: 'failed',
+          error: { code: 'runtime-failed', message: 'The hosted line could not connect.' },
+        },
+      })],
     })
     const listening = pluginState({
       ...failed,
-      runtime: { phase: 'listening', connectedAt: Date.now() },
+      routes: [defaultRoute({
+        phoneNumber: '+14155552671',
+        assignedPhoneNumber: '+14155550000',
+        runtime: { phase: 'listening', connectedAt: Date.now() },
+      })],
     })
     const disconnected = pluginState()
     const { api } = renderState(failed)
-    api.retryRuntime.mockResolvedValue(success(listening))
+    api.retryRouteRuntime.mockResolvedValue(success(listening))
     api.disconnect.mockResolvedValue(success(disconnected))
     vi.spyOn(window, 'confirm').mockReturnValue(true)
     const user = userEvent.setup()
 
     await user.click(await screen.findByRole('button', { name: 'Retry listener' }))
-    expect(api.retryRuntime).toHaveBeenCalledOnce()
+    expect(api.retryRouteRuntime).toHaveBeenCalledWith({ routeId: 'default' })
     await screen.findAllByText('Listening')
-    await user.click(screen.getByRole('button', { name: 'Disconnect' }))
-    expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining('Photon projects and users will be preserved'))
+    await user.click(screen.getByRole('button', { name: 'Disconnect all routes' }))
+    expect(window.confirm).toHaveBeenCalledWith(
+      'Disconnect all local iMessage routes? Photon projects and users will be preserved.',
+    )
     expect(api.disconnect).toHaveBeenCalledWith({ expectedRevision: 7 })
-    expect(await screen.findByText(/Your hosted iMessage number appears here/)).toBeTruthy()
+    expect(await screen.findByText(/Your hosted iMessage number appears here after the sender is saved/)).toBeTruthy()
   })
 })
