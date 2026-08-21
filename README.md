@@ -36,13 +36,14 @@ npm pack
 dsh plugin --profile web add ./dsh-imessage-*.tgz
 ```
 
-Open **Settings → iMessage** and complete the three cards:
+Open **Settings → iMessage** and complete the cards:
 
 1. Select **Authorize**. The browser opens a blank window immediately, then navigates it to Photon after DSH receives the device code. If popups are blocked, use the displayed link and copyable code.
-2. Enter the E.164 number you will text from, such as `+14155552671`, and save it.
-3. Copy or text the assigned hosted iMessage number shown in the final card.
+2. Optionally set the **local project directory** and **Photon project name**, then save. Leave the directory blank to use the `dsh web` process working directory. Leave the Photon name blank to use `dsh`. Use a distinct Photon project name on each machine so hosted lines do not collide.
+3. Enter the E.164 number you will text from, such as `+14155552671`, and save it.
+4. Copy or text the assigned hosted iMessage number shown in the final card.
 
-The plugin always ensures a Photon project named exactly `dsh`. It reuses the stored accessible project first, otherwise reuses the sole exact case-sensitive match, and creates a US/iMessage project only when none exists. Multiple exact projects or users are reported with their public IDs for manual resolution; the plugin never chooses arbitrarily.
+The plugin ensures a Photon project with the configured name (default `dsh`). It reuses the stored accessible project first when that project still has the same name, otherwise reuses the sole exact case-sensitive match, and creates a US/iMessage project only when none exists. Multiple exact projects or users are reported with their public IDs for manual resolution; the plugin never chooses arbitrarily.
 
 ## Commands
 
@@ -62,7 +63,7 @@ Ordinary text is queued as a DSH prompt. Prefix a prompt that genuinely begins w
 
 `/new` and `/switch` fail while an iMessage prompt is queued/running or a human interaction is pending. Send `/stop` first.
 
-New sessions use the `dsh web` process working directory, the configured default Agent Preset, and the current default model. Session listing includes only root sessions whose `cwd` exactly matches that working directory. Subagents are excluded. A live browser-created Agent can be adopted, but the plugin never disposes an adopted Agent; it disposes only handles it created or resumed itself.
+New sessions use the configured workspace directory (or the `dsh web` process working directory when unset), the configured default Agent Preset, and the current default model. Session listing includes only root sessions whose `cwd` exactly matches that working directory. Subagents are excluded. A live browser-created Agent can be adopted, but the plugin never disposes an adopted Agent; it disposes only handles it created or resumed itself.
 
 ## Routing and privacy boundaries
 
@@ -106,10 +107,10 @@ When the management token expires, the stored project secret can continue routin
 ## Limitations
 
 - One Photon account, one sending phone number, and one assigned hosted line per plugin instance.
+- Local workspace directory and Photon project name are configurable in **Settings → iMessage**; defaults remain `process.cwd()` and `dsh`.
 - Text-only direct iMessage conversations in v1.
 - Outbound answers are plain text: markdown formatting is stripped, while code blocks are preserved verbatim.
 - Attachments, reactions, group chats, SMS, and RCS are ignored.
-- Project name is fixed to the exact string `dsh`.
 - All same-workspace root DSH sessions are visible to `/sessions` and `/switch`.
 - No automatic cleanup of Photon cloud resources.
 

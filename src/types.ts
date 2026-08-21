@@ -1,6 +1,8 @@
 /** Stable failures that are safe to render in the settings UI or iMessage. */
 export type PluginErrorCode =
   | 'invalid-phone'
+  | 'invalid-workspace'
+  | 'invalid-project-name'
   | 'auth-expired'
   | 'auth-denied'
   | 'authorization-required'
@@ -42,7 +44,7 @@ export interface PhotonAccountView {
 export interface PhotonProjectView {
   /** Photon project id. */
   id: string
-  /** Photon project name; always `dsh`. */
+  /** Photon project name configured for this machine. */
   name: string
 }
 
@@ -204,12 +206,26 @@ export interface ImessagePluginState {
   provisioning: ProvisioningView
   /** Public Spectrum listener state. */
   runtime: RuntimeView
+  /** Absolute local workspace used for new iMessage DSH sessions. */
+  workspaceCwd: string
+  /** Photon project name created or reused for this machine. */
+  photonProjectName: string
   /** Configured E.164 sender phone number. */
   phoneNumber?: string
   /** Photon-hosted iMessage number assigned to this sender. */
   assignedPhoneNumber?: string
   /** Active DSH root session selected for iMessage. */
   activeSessionId?: string
+}
+
+/** Optimistic request for saving local workspace and Photon project routing. */
+export interface SaveWorkspaceRequest {
+  /** Absolute local project directory, or empty to use the host process cwd. */
+  workspaceCwd: string
+  /** Photon project name to create or reuse; empty uses the default `dsh`. */
+  photonProjectName: string
+  /** Settings revision observed by the browser. */
+  expectedRevision: number
 }
 
 /** Optimistic request for provisioning a sender phone number. */

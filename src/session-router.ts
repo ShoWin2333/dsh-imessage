@@ -84,6 +84,16 @@ export class SessionRouter {
     ctx.on('agent/disposed', ({ agent }) => this.onAgentDisposed(agent))
   }
 
+  /** Replace the workspace used for new and listed root sessions. */
+  setCwd(cwd: string): void {
+    this.options.cwd = cwd
+  }
+
+  /** Current workspace used for new and listed root sessions. */
+  get cwd(): string {
+    return this.options.cwd
+  }
+
   /** Update whether the listener is healthy enough to own interactions. */
   setRuntimeHealthy(healthy: boolean): void {
     this.runtimeHealthy = healthy

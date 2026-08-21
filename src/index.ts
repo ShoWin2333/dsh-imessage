@@ -53,6 +53,7 @@ import {
   type SpectrumInboundMessage,
 } from './spectrum-runtime.js'
 import { pluginDomainSpec } from './storage.js'
+import { normalizePhotonProjectName, resolveWorkspaceCwd } from './workspace.js'
 import type {
   AuthorizationView,
   DisconnectRequest,
@@ -62,6 +63,7 @@ import type {
   ProvisioningView,
   RuntimeView,
   SavePhoneRequest,
+  SaveWorkspaceRequest,
 } from './types.js'
 
 export type * from './types.js'
@@ -75,6 +77,7 @@ export { parseQuestionAnswer } from './question-answer.js'
 export { TurnCorrelation } from './turn-correlation.js'
 export { authorizeDevice } from './device-auth.js'
 export { ensureDshProject, ensureSharedUser } from './photon-management.js'
+export { normalizePhotonProjectName, resolveWorkspaceCwd } from './workspace.js'
 
 /** Cordis plugin name. */
 export const name = 'dsh-imessage'
@@ -139,13 +142,21 @@ export class DshPhotonImessageService extends TypertRemoteService {
     this.domain = domain
     this.inbound = domain.table('inbound')
 
+    const settings = this.settingsScope.get()
+    let workspaceCwd = process.cwd()
+    try {
+      workspaceCwd = await resolveWorkspaceCwd(settings.workspaceCwd)
+    } catch {
+      // A stale absolute path from another machine must not block plugin startup.
+      workspaceCwd = process.cwd()
+    }
     const router = new SessionRouter(this.ctx, {
       get: () => domain.global.get().activeSessionId,
       set: async activeSessionId => {
         await domain.global.set(activeSessionId === undefined ? {} : { activeSessionId })
       },
     }, {
-      cwd: process.cwd(),
+      cwd: workspaceCwd,
       sessionsPerPage: this.config.sessionsPerPage,
       maxOutboundChars: this.config.maxOutboundChars,
       interactionTimeoutMs: this.config.interactionTimeoutMs,
@@ -206,6 +217,8 @@ export class DshPhotonImessageService extends TypertRemoteService {
       authorization: this.authorizationView(credential),
       provisioning: this.provisioning,
       runtime: this.runtime,
+      workspaceCwd: this.requireRouter().cwd,
+      photonProjectName: normalizePhotonProjectName(settings.photonProjectName),
       ...(settings.phoneNumber === undefined ? {} : { phoneNumber: settings.phoneNumber }),
       ...(settings.assignedPhoneNumber === undefined
         ? {}
@@ -214,13 +227,120 @@ export class DshPhotonImessageService extends TypertRemoteService {
     }
   }
 
+  /** Persist the local workspace and Photon project name used by this machine. */
+  @Remote('saveWorkspace')
+  async saveWorkspace(request: SaveWorkspaceRequest): Promise<MutationResult> {
+    return this.mutation(() => this.enqueueProvision(async () => {
+      await this.requireWritablePlanes()
+      this.assertRevision(request.expectedRevision)
+      const workspaceCwd = await resolveWorkspaceCwd(request.workspaceCwd)
+      const photonProjectName = normalizePhotonProjectName(request.photonProjectName)
+      const current = this.requireSettings().get()
+      const cwdChanged = workspaceCwd !== this.requireRouter().cwd
+      const projectChanged = photonProjectName !== normalizePhotonProjectName(current.photonProjectName)
+
+      const nextSettings: PluginSettings = {
+        ...current,
+        workspaceCwd,
+        photonProjectName,
+      }
+
+      const managementCredential = projectChanged
+        ? await this.resolveCredential()
+        : undefined
+      const canSwitchProject = managementCredential !== undefined
+        && managementCredential.accessTokenExpiresAt > Date.now()
+
+      if (!projectChanged || !canSwitchProject) {
+        await this.ctx.settings.update(SETTINGS_NAMESPACE, nextSettings, request.expectedRevision)
+        this.requireRouter().setCwd(workspaceCwd)
+        if (cwdChanged) await this.requireRouter().reset()
+        return
+      }
+
+      this.provisioning = { phase: 'project' }
+      const api = createPhotonManagementApi(
+        managementCredential.apiOrigin,
+        managementCredential.accessToken,
+      )
+      let prepared: Awaited<ReturnType<SpectrumSupervisor['prepare']>> | undefined
+      try {
+        const project = await ensureDshProject(api, undefined, photonProjectName)
+        let phoneFields: Pick<PluginSettings, 'phoneNumber' | 'assignedPhoneNumber' | 'photonUserId'> = {}
+        if (current.phoneNumber !== undefined) {
+          this.provisioning = { phase: 'user' }
+          const user = await ensureSharedUser(
+            api,
+            project.id,
+            current.phoneNumber,
+            accountView(managementCredential.account),
+          )
+          phoneFields = {
+            phoneNumber: current.phoneNumber,
+            assignedPhoneNumber: user.assignedPhoneNumber,
+            photonUserId: user.id,
+          }
+        }
+
+        const nextCredential: PhotonCredential = {
+          ...managementCredential,
+          project: { id: project.id, name: project.name, secret: project.secret },
+        }
+        const connectionConfig = phoneFields.phoneNumber === undefined
+          || phoneFields.assignedPhoneNumber === undefined
+          ? undefined
+          : {
+            projectId: project.id,
+            projectSecret: project.secret,
+            senderPhoneNumber: phoneFields.phoneNumber,
+            assignedPhoneNumber: phoneFields.assignedPhoneNumber,
+          }
+        prepared = connectionConfig === undefined
+          ? undefined
+          : await this.requireSpectrum().prepare(connectionConfig)
+
+        const oldCredentialValue = (await this.ctx.credentials.resolve(PHOTON_CREDENTIAL_REF))?.value
+        try {
+          await this.ctx.credentials.set(PHOTON_CREDENTIAL_REF, serializePhotonCredential(nextCredential))
+          await this.ctx.settings.update(SETTINGS_NAMESPACE, {
+            ...nextSettings,
+            ...phoneFields,
+          }, request.expectedRevision)
+        } catch (error) {
+          if (prepared !== undefined) await prepared.stop().catch(() => {})
+          if (oldCredentialValue === undefined) await this.ctx.credentials.unset(PHOTON_CREDENTIAL_REF)
+          else await this.ctx.credentials.set(PHOTON_CREDENTIAL_REF, oldCredentialValue)
+          throw error
+        }
+
+        this.provisioning = {
+          phase: 'ready',
+          project: { id: project.id, name: project.name },
+        }
+        this.requireRouter().setCwd(workspaceCwd)
+        await this.requireRouter().reset()
+        if (connectionConfig !== undefined && prepared !== undefined) {
+          await this.requireSpectrum().activate(connectionConfig, prepared)
+          prepared = undefined
+        } else {
+          await this.requireSpectrum().stop()
+        }
+      } catch (error) {
+        if (prepared !== undefined) await prepared.stop().catch(() => {})
+        const safe = publicError(error)
+        this.provisioning = { phase: 'failed', error: safe }
+        throw error
+      }
+    }))
+  }
+
   /** Start Photon CLI-compatible device authorization and return once its code is available. */
   @Remote('beginAuthorization')
   async beginAuthorization(): Promise<MutationResult> {
     return this.mutation(async () => {
       await this.requireWritablePlanes()
       if (this.authTask !== undefined && this.authController === undefined) {
-        throw new PluginError('busy', 'Photon authorization is already provisioning the dsh project.')
+        throw new PluginError('busy', 'Photon authorization is already provisioning the project.')
       }
       this.cancelAuthorizationInternal()
       const generation = ++this.authGeneration
@@ -393,7 +513,8 @@ export class DshPhotonImessageService extends TypertRemoteService {
     this.provisioning = { phase: 'project' }
     const management = createPhotonManagementApi(this.config.photonApiOrigin, result.accessToken)
     const oldCredential = await this.resolveCredential(false)
-    const project = await ensureDshProject(management, oldCredential?.project.id)
+    const projectName = normalizePhotonProjectName(this.requireSettings().get().photonProjectName)
+    const project = await ensureDshProject(management, oldCredential?.project.id, projectName)
     assertAuthorizationActive(generation, this.authGeneration, signal)
 
     const currentSettings = this.requireSettings().get()
@@ -608,6 +729,16 @@ function validateSettings(settings: PluginSettings): void {
   }
   if (settings.phoneNumber !== undefined) normalizeE164(settings.phoneNumber)
   if (settings.assignedPhoneNumber !== undefined) normalizeE164(settings.assignedPhoneNumber)
+  if (settings.photonProjectName !== undefined) normalizePhotonProjectName(settings.photonProjectName)
+  if (settings.workspaceCwd !== undefined && settings.workspaceCwd.trim().length > 0) {
+    if (!settings.workspaceCwd.includes('\0') && !isAbsolutePathShape(settings.workspaceCwd)) {
+      throw new Error('workspaceCwd must be an absolute path when set')
+    }
+  }
+}
+
+function isAbsolutePathShape(value: string): boolean {
+  return value.startsWith('/') || /^[A-Za-z]:[\\/]/u.test(value)
 }
 
 function assertAuthorizationActive(current: number, actual: number, signal: AbortSignal): void {

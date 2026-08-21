@@ -22,6 +22,8 @@ function pluginState(overrides: Partial<ImessagePluginState> = {}): ImessagePlug
     authorization: { phase: 'disconnected' },
     provisioning: { phase: 'idle' },
     runtime: { phase: 'stopped' },
+    workspaceCwd: '/workspace',
+    photonProjectName: 'dsh',
     ...overrides,
   }
 }
@@ -35,6 +37,7 @@ function remote(initial: ImessagePluginState) {
     getState: vi.fn(async () => ({ ok: true as const, value: initial })),
     beginAuthorization: vi.fn(async () => success(initial)),
     cancelAuthorization: vi.fn(async () => success(initial)),
+    saveWorkspace: vi.fn(async () => success(initial)),
     savePhone: vi.fn(async () => success(initial)),
     disconnect: vi.fn(async () => success(initial)),
     retryRuntime: vi.fn(async () => success(initial)),
@@ -93,6 +96,36 @@ describe('Settings > iMessage', () => {
     expect(screen.getByText(/Expires in/)).toBeTruthy()
     await user.click(screen.getByRole('button', { name: 'Cancel' }))
     expect(api.cancelAuthorization).toHaveBeenCalledOnce()
+  })
+
+  it('saves workspace routing for local cwd and Photon project name', async () => {
+    const initial = pluginState()
+    const saved = pluginState({
+      revision: 8,
+      workspaceCwd: '/tmp',
+      photonProjectName: 'dsh-laptop-b',
+    })
+    const { api } = renderState(initial)
+    api.saveWorkspace.mockResolvedValue(success(saved))
+    const user = userEvent.setup()
+
+    const cwd = await screen.findByLabelText('Local project directory')
+    const project = screen.getByLabelText('Photon project name')
+    await user.clear(cwd)
+    await user.type(cwd, '/tmp')
+    await user.clear(project)
+    await user.type(project, 'dsh-laptop-b')
+    await user.click(screen.getByRole('button', { name: 'Save workspace' }))
+
+    await waitFor(() => {
+      expect(api.saveWorkspace).toHaveBeenCalledWith({
+        workspaceCwd: '/tmp',
+        photonProjectName: 'dsh-laptop-b',
+        expectedRevision: 7,
+      })
+    })
+    expect(await screen.findByDisplayValue('/tmp')).toBeTruthy()
+    expect(screen.getByDisplayValue('dsh-laptop-b')).toBeTruthy()
   })
 
   it('validates E.164, provisions a sender, and renders the assigned sms link', async () => {

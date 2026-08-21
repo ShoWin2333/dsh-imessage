@@ -79,6 +79,10 @@ export function resolveConfig(config: Config = {}): ResolvedConfig {
 
 /** Non-secret user settings stored by DSH. */
 export interface PluginSettings {
+  /** Absolute local workspace used for new iMessage DSH sessions. */
+  workspaceCwd?: string
+  /** Photon project name to create or reuse for this machine. */
+  photonProjectName?: string
   /** Configured sender E.164 number. */
   phoneNumber?: string
   /** Assigned Photon-hosted line. */
@@ -89,6 +93,8 @@ export interface PluginSettings {
 
 /** DSH settings schema for non-secret user configuration. */
 export const PluginSettingsSchema: s<PluginSettings> = s.object({
+  workspaceCwd: s.string(),
+  photonProjectName: s.string(),
   phoneNumber: s.string(),
   assignedPhoneNumber: s.string(),
   photonUserId: s.string(),
