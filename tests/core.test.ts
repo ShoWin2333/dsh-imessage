@@ -43,15 +43,31 @@ describe('public primitives', () => {
     expect(safe.code).toBe('internal-error')
   })
 
-  it('rejects cross-origin requests and forces redirect:error', async () => {
-    let observed: RequestInit | undefined
-    const implementation = async (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-      observed = init
+  it('rejects cross-origin requests and follows one same-origin redirect', async () => {
+    const observed: Array<{ url: string; redirect?: RequestRedirect }> = []
+    const implementation = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const url = String(input)
+      observed.push({ url, redirect: init?.redirect })
+      if (url === 'https://app.photon.codes/api/projects') {
+        return new Response(null, {
+          status: 308,
+          headers: { Location: 'https://app.photon.codes/api/projects/' },
+        })
+      }
       return new Response('ok', { status: 200 })
     }
     const secure = createSecureFetch('https://app.photon.codes', implementation as typeof fetch)
-    await secure('https://app.photon.codes/api/projects')
-    expect(observed?.redirect).toBe('error')
+    await expect(secure('https://app.photon.codes/api/projects')).resolves.toMatchObject({ status: 200 })
+    expect(observed).toEqual([
+      { url: 'https://app.photon.codes/api/projects', redirect: 'manual' },
+      { url: 'https://app.photon.codes/api/projects/', redirect: 'error' },
+    ])
     await expect(secure('https://attacker.example/token')).rejects.toThrow('cross-origin')
+
+    const evil = createSecureFetch('https://app.photon.codes', (async () => new Response(null, {
+      status: 302,
+      headers: { Location: 'https://attacker.example/steal' },
+    })) as typeof fetch)
+    await expect(evil('https://app.photon.codes/api/projects')).rejects.toThrow('cross-origin')
   })
 })

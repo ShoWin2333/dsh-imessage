@@ -193,22 +193,34 @@ export async function ensureDshProject(
     if (stored?.name === projectName) project = stored
   }
 
+  let listError: unknown
   if (project === undefined) {
-    const exact = (await api.listProjects()).filter(candidate => candidate.name === projectName)
-    if (exact.length > 1) {
-      throw new PluginError(
-        'project-ambiguous',
-        `Multiple Photon projects are named exactly ${projectName}. Rename extras before continuing.`,
-        exact.map(candidate => candidate.id),
-      )
+    try {
+      const exact = (await api.listProjects()).filter(candidate => candidate.name === projectName)
+      if (exact.length > 1) {
+        throw new PluginError(
+          'project-ambiguous',
+          `Multiple Photon projects are named exactly ${projectName}. Rename extras before continuing.`,
+          exact.map(candidate => candidate.id),
+        )
+      }
+      project = exact[0]
+    } catch (error) {
+      if (error instanceof PluginError && error.code === 'project-ambiguous') throw error
+      listError = error
     }
-    project = exact[0]
-    if (project === undefined) {
+  }
+
+  if (project === undefined) {
+    try {
       const id = await api.createProject(projectName)
       project = await api.getProject(id)
       if (project === undefined || project.name !== projectName) {
         throw unavailable('Photon created a project but it could not be read back.')
       }
+    } catch (error) {
+      if (listError !== undefined) throw listError
+      throw error
     }
   }
 
@@ -300,7 +312,36 @@ function ensureResponse(
   if (response.status === 401 || response.status === 403) {
     throw new PluginError('authorization-required', 'Photon authorization expired. Reauthorize to change configuration.')
   }
-  throw unavailable(`Could not ${operation}.`)
+  // Eden maps thrown fetch failures (network, rejected redirects) to status 503.
+  if (response.status === 503) {
+    throw unavailable(
+      `Could not ${operation} because Photon was unreachable. Check network access to the Photon API and retry.`,
+    )
+  }
+  const detail = safeErrorDetail(response.error)
+  throw unavailable(detail === undefined
+    ? `Could not ${operation}.`
+    : `Could not ${operation} (HTTP ${response.status}: ${detail}).`)
+}
+
+function safeErrorDetail(error: unknown): string | undefined {
+  if (!error || typeof error !== 'object') return undefined
+  const record = error as Record<string, unknown>
+  for (const key of ['value', 'message']) {
+    const nested = record[key]
+    if (typeof nested === 'string') {
+      const trimmed = nested.trim()
+      if (trimmed.length === 0) continue
+      if (/token|secret|bearer|authorization/i.test(trimmed)) return undefined
+      return trimmed.slice(0, 120)
+    }
+    if (nested instanceof Error) {
+      const message = nested.message.trim()
+      if (message.length === 0 || /token|secret|bearer|authorization/i.test(message)) return undefined
+      return message.slice(0, 120)
+    }
+  }
+  return undefined
 }
 
 function throwSpectrumCreateFailure(error: unknown, status: number): never {

@@ -8,6 +8,7 @@ import {
   type PhotonProject,
   type PhotonSpectrumUser,
 } from '../src/photon-management.js'
+import { PluginError } from '../src/errors.js'
 
 function management(overrides: Partial<PhotonManagementApi> = {}): PhotonManagementApi {
   return {
@@ -118,6 +119,23 @@ describe('Photon management idempotency', () => {
       secret: next.projectSecret,
     })
     expect(api.createProject).not.toHaveBeenCalled()
+  })
+
+  it('falls back to create when listing projects fails for a new project name', async () => {
+    const created = project('created', { name: 'dsh-laptop-b' })
+    const api = management({
+      listProjects: vi.fn(async () => {
+        throw new PluginError('photon-unavailable', 'Could not list Photon projects.')
+      }),
+      getProject: vi.fn(async id => id === created.id ? created : undefined),
+      createProject: vi.fn(async () => created.id),
+    })
+    await expect(ensureDshProject(api, undefined, 'dsh-laptop-b')).resolves.toEqual({
+      id: created.id,
+      name: 'dsh-laptop-b',
+      secret: created.projectSecret,
+    })
+    expect(api.createProject).toHaveBeenCalledWith('dsh-laptop-b')
   })
 
   it('reuses one exact phone user across paginated results', async () => {

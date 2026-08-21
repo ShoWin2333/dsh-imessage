@@ -9,7 +9,7 @@ As of `0.1.0-alpha.0`, npm reports moderate OpenTelemetry baggage-propagation ad
 Security invariants enforced by code and tests include:
 
 - tokens, project secrets, and device codes remain host-only;
-- Photon fetches reject redirects and cross-origin requests/responses;
+- Photon fetches reject cross-origin requests/responses and cross-origin redirects; a single same-origin redirect hop is allowed (for example trailing-slash normalization);
 - only the configured sender's inbound iMessage DM route is accepted; dedicated routes verify the exact assigned recipient, while shared routes rely on Photon's project-scoped delivery because Spectrum exposes only its `shared` recipient sentinel;
 - authorization failures and unknown internal failures are converted to stable redacted errors;
 - approvals and questions are claimed only for an exact correlated iMessage turn and fail closed when delivery is unhealthy;

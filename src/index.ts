@@ -245,18 +245,18 @@ export class DshPhotonImessageService extends TypertRemoteService {
         photonProjectName,
       }
 
+      // Always persist local routing first. Photon project switching is best-effort
+      // afterward so a flaky list/create call cannot block cwd configuration.
+      await this.ctx.settings.update(SETTINGS_NAMESPACE, nextSettings, request.expectedRevision)
+      this.requireRouter().setCwd(workspaceCwd)
+      if (cwdChanged) await this.requireRouter().reset()
+
       const managementCredential = projectChanged
         ? await this.resolveCredential()
         : undefined
       const canSwitchProject = managementCredential !== undefined
         && managementCredential.accessTokenExpiresAt > Date.now()
-
-      if (!projectChanged || !canSwitchProject) {
-        await this.ctx.settings.update(SETTINGS_NAMESPACE, nextSettings, request.expectedRevision)
-        this.requireRouter().setCwd(workspaceCwd)
-        if (cwdChanged) await this.requireRouter().reset()
-        return
-      }
+      if (!projectChanged || !canSwitchProject) return
 
       this.provisioning = { phase: 'project' }
       const api = createPhotonManagementApi(
@@ -300,12 +300,15 @@ export class DshPhotonImessageService extends TypertRemoteService {
           : await this.requireSpectrum().prepare(connectionConfig)
 
         const oldCredentialValue = (await this.ctx.credentials.resolve(PHOTON_CREDENTIAL_REF))?.value
+        const switchRevision = this.settingsDescriptor().revision
         try {
           await this.ctx.credentials.set(PHOTON_CREDENTIAL_REF, serializePhotonCredential(nextCredential))
-          await this.ctx.settings.update(SETTINGS_NAMESPACE, {
-            ...nextSettings,
-            ...phoneFields,
-          }, request.expectedRevision)
+          if (Object.keys(phoneFields).length > 0) {
+            await this.ctx.settings.update(SETTINGS_NAMESPACE, {
+              ...this.requireSettings().get(),
+              ...phoneFields,
+            }, switchRevision)
+          }
         } catch (error) {
           if (prepared !== undefined) await prepared.stop().catch(() => {})
           if (oldCredentialValue === undefined) await this.ctx.credentials.unset(PHOTON_CREDENTIAL_REF)
@@ -317,7 +320,6 @@ export class DshPhotonImessageService extends TypertRemoteService {
           phase: 'ready',
           project: { id: project.id, name: project.name },
         }
-        this.requireRouter().setCwd(workspaceCwd)
         await this.requireRouter().reset()
         if (connectionConfig !== undefined && prepared !== undefined) {
           await this.requireSpectrum().activate(connectionConfig, prepared)
