@@ -70,7 +70,7 @@ describe('Photon device authorization', () => {
       client_id: 'photon-cli',
     })
     expect(new Headers(calls[3]?.init?.headers).get('Authorization')).toBe('Bearer management-token')
-    expect(calls.every(call => call.init?.redirect === 'error')).toBe(true)
+    expect(calls.every(call => call.init?.redirect === 'manual' || call.init?.redirect === 'error')).toBe(true)
   })
 
   it('publishes only public code data and applies pending/slow_down/429 backoff', async () => {

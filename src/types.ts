@@ -190,6 +190,26 @@ export type RuntimeView =
   | RuntimeRetrying
   | RuntimeFailed
 
+/** Public projection of one configured iMessage route. */
+export interface ImessageRouteState {
+  /** Stable local route id. */
+  id: string
+  /** Display label. */
+  label: string
+  /** Absolute local workspace used for this route. */
+  workspaceCwd: string
+  /** Photon project name for this route. */
+  photonProjectName: string
+  /** Configured E.164 sender phone number. */
+  phoneNumber?: string
+  /** Photon-hosted iMessage number assigned to this sender on this project. */
+  assignedPhoneNumber?: string
+  /** Public Spectrum listener state for this route. */
+  runtime: RuntimeView
+  /** Active DSH root session selected for this route. */
+  activeSessionId?: string
+}
+
 /** Complete settings-page projection. */
 export interface ImessagePluginState {
   /** Monotonic DSH settings revision used for optimistic writes. */
@@ -202,24 +222,18 @@ export interface ImessagePluginState {
   credentialWritable: boolean
   /** Public device-authorization state. */
   authorization: AuthorizationView
-  /** Public Photon provisioning state. */
+  /** Public Photon provisioning state for the in-flight mutation. */
   provisioning: ProvisioningView
-  /** Public Spectrum listener state. */
-  runtime: RuntimeView
-  /** Absolute local workspace used for new iMessage DSH sessions. */
-  workspaceCwd: string
-  /** Photon project name created or reused for this machine. */
-  photonProjectName: string
-  /** Configured E.164 sender phone number. */
-  phoneNumber?: string
-  /** Photon-hosted iMessage number assigned to this sender. */
-  assignedPhoneNumber?: string
-  /** Active DSH root session selected for iMessage. */
-  activeSessionId?: string
+  /** Configured iMessage routes on this machine. */
+  routes: ImessageRouteState[]
 }
 
-/** Optimistic request for saving local workspace and Photon project routing. */
-export interface SaveWorkspaceRequest {
+/** Create or update one local route's workspace and Photon project. */
+export interface UpsertRouteRequest {
+  /** Existing route id; omit to create a new route. */
+  id?: string
+  /** Optional display label. */
+  label?: string
   /** Absolute local project directory, or empty to use the host process cwd. */
   workspaceCwd: string
   /** Photon project name to create or reuse; empty uses the default `dsh`. */
@@ -228,17 +242,46 @@ export interface SaveWorkspaceRequest {
   expectedRevision: number
 }
 
-/** Optimistic request for provisioning a sender phone number. */
-export interface SavePhoneRequest {
+/** Provision a sender phone number for one route. */
+export interface SaveRoutePhoneRequest {
+  /** Local route id. */
+  routeId: string
   /** Number the user will send iMessages from. */
   phoneNumber: string
   /** Settings revision observed by the browser. */
   expectedRevision: number
 }
 
+/** Remove one local route without deleting Photon cloud resources. */
+export interface RemoveRouteRequest {
+  /** Local route id. */
+  routeId: string
+  /** Settings revision observed by the browser. */
+  expectedRevision: number
+}
+
+/** Retry Spectrum for one route. */
+export interface RetryRouteRuntimeRequest {
+  /** Local route id. */
+  routeId: string
+}
+
 /** Optimistic request for disconnecting local plugin state. */
 export interface DisconnectRequest {
   /** Settings revision observed by the browser. */
+  expectedRevision: number
+}
+
+/** @deprecated Kept for older generated clients; prefer UpsertRouteRequest. */
+export interface SaveWorkspaceRequest {
+  workspaceCwd: string
+  photonProjectName: string
+  expectedRevision: number
+}
+
+/** @deprecated Kept for older generated clients; prefer SaveRoutePhoneRequest. */
+export interface SavePhoneRequest {
+  phoneNumber: string
   expectedRevision: number
 }
 

@@ -79,20 +79,41 @@ export function resolveConfig(config: Config = {}): ResolvedConfig {
 
 /** Non-secret user settings stored by DSH. */
 export interface PluginSettings {
-  /** Absolute local workspace used for new iMessage DSH sessions. */
+  /** Multi-route iMessage configuration. Preferred storage shape. */
+  routes?: RouteSettings[]
+  /**
+   * Legacy flat fields retained so older installs migrate cleanly into `routes`.
+   * New writes should only persist `routes`.
+   */
   workspaceCwd?: string
-  /** Photon project name to create or reuse for this machine. */
   photonProjectName?: string
-  /** Configured sender E.164 number. */
   phoneNumber?: string
-  /** Assigned Photon-hosted line. */
   assignedPhoneNumber?: string
-  /** Public Photon Spectrum user id. */
+  photonUserId?: string
+}
+
+/** One persisted iMessage route. */
+export interface RouteSettings {
+  id: string
+  label?: string
+  workspaceCwd?: string
+  photonProjectName: string
+  phoneNumber?: string
+  assignedPhoneNumber?: string
   photonUserId?: string
 }
 
 /** DSH settings schema for non-secret user configuration. */
 export const PluginSettingsSchema: s<PluginSettings> = s.object({
+  routes: s.array(s.object({
+    id: s.string().required(),
+    label: s.string(),
+    workspaceCwd: s.string(),
+    photonProjectName: s.string().required(),
+    phoneNumber: s.string(),
+    assignedPhoneNumber: s.string(),
+    photonUserId: s.string(),
+  })),
   workspaceCwd: s.string(),
   photonProjectName: s.string(),
   phoneNumber: s.string(),

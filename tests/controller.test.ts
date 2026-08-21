@@ -17,9 +17,13 @@ function state(phase: 'disconnected' | 'pending'): ImessagePluginState {
         expiresAt: Date.now() + 60_000,
       },
     provisioning: { phase: 'idle' },
-    runtime: { phase: 'stopped' },
-    workspaceCwd: '/workspace',
-    photonProjectName: 'dsh',
+    routes: [{
+      id: 'default',
+      label: 'dsh',
+      workspaceCwd: '/workspace',
+      photonProjectName: 'dsh',
+      runtime: { phase: 'stopped' },
+    }],
   }
 }
 
@@ -37,10 +41,11 @@ describe('iMessage settings controller concurrency', () => {
       getState,
       beginAuthorization: vi.fn(async () => success(state('pending'))),
       cancelAuthorization: vi.fn(),
-      saveWorkspace: vi.fn(),
-      savePhone: vi.fn(),
+      upsertRoute: vi.fn(),
+      removeRoute: vi.fn(),
+      saveRoutePhone: vi.fn(),
       disconnect: vi.fn(),
-      retryRuntime: vi.fn(),
+      retryRouteRuntime: vi.fn(),
     }
     const controller = new ImessageSettingsController(api as never)
     const unsubscribe = controller.subscribe(() => {})
@@ -60,10 +65,11 @@ describe('iMessage settings controller concurrency', () => {
       getState: vi.fn(async () => ({ ok: true as const, value: state('disconnected') })),
       beginAuthorization,
       cancelAuthorization: vi.fn(),
-      saveWorkspace: vi.fn(),
-      savePhone: vi.fn(),
+      upsertRoute: vi.fn(),
+      removeRoute: vi.fn(),
+      saveRoutePhone: vi.fn(),
       disconnect: vi.fn(),
-      retryRuntime: vi.fn(),
+      retryRouteRuntime: vi.fn(),
     }
     const controller = new ImessageSettingsController(api as never)
     const first = controller.beginAuthorization()
