@@ -18,6 +18,7 @@ import { markdownToPlainText } from './plaintext.js'
 import { PLUGIN_ID } from './constants.js'
 import { PluginError, publicError } from './errors.js'
 import { InteractionBroker } from './interactions.js'
+import { OutboundMediaTools } from './outbound-media.js'
 import { presetForResume, selectionForResume } from './session-selection.js'
 import type { SpectrumInboundMessage } from './spectrum-runtime.js'
 import { TurnCorrelation } from './turn-correlation.js'
@@ -50,6 +51,8 @@ export interface SessionRouterOptions {
   sessionsPerPage: number
   /** Maximum outbound grapheme count. */
   maxOutboundChars: number
+  /** Maximum outbound media file size in bytes. */
+  maxOutboundMediaBytes: number
   /** Interaction timeout. */
   interactionTimeoutMs: number
 }
@@ -65,6 +68,7 @@ export class SessionRouter {
   private closed = false
   private runtimeHealthy = false
   readonly interactions: InteractionBroker
+  private readonly outboundMedia: OutboundMediaTools
 
   /** Construct and subscribe one router. */
   constructor(
@@ -72,11 +76,15 @@ export class SessionRouter {
     private readonly active: ActiveSessionStore,
     private readonly options: SessionRouterOptions,
   ) {
-    this.interactions = new InteractionBroker({
-      ownsCurrentTurn: agent => this.turns.owns(agent),
-      channelFor: agent => this.turns.channelFor(agent),
+    const ownership = {
+      ownsCurrentTurn: (agent: Agent) => this.turns.owns(agent),
+      channelFor: (agent: Agent) => this.turns.channelFor(agent),
       deliveryHealthy: () => this.runtimeHealthy,
-    }, options.interactionTimeoutMs)
+    }
+    this.interactions = new InteractionBroker(ownership, options.interactionTimeoutMs)
+    this.outboundMedia = new OutboundMediaTools(ownership, {
+      maxOutboundMediaBytes: options.maxOutboundMediaBytes,
+    })
 
     ctx.on('agent/inbox/claimed', payload => this.onClaimed(payload.agent, payload.message.id, payload.turn))
     ctx.on('agent/inbox/discarded', payload => this.onDiscarded(payload.agent, payload.message.id))
@@ -419,7 +427,7 @@ export class SessionRouter {
       setup: async agentCtx => {
         await this.ctx.agentPresets.mount(agentCtx, presetId)
         installSelection(agentCtx, selection)
-        disposeBinding = this.interactions.install(agentCtx, this.ctx)
+        disposeBinding = this.installAgentBindings(agentCtx)
       },
     })
     this.bindings.set(handle.agent, {
@@ -442,7 +450,7 @@ export class SessionRouter {
       setup: async agentCtx => {
         await this.ctx.agentPresets.mount(agentCtx, presetId)
         installSelection(agentCtx, selection)
-        disposeBinding = this.interactions.install(agentCtx, this.ctx)
+        disposeBinding = this.installAgentBindings(agentCtx)
       },
     })
     this.bindings.set(handle.agent, {
@@ -454,8 +462,17 @@ export class SessionRouter {
 
   private bindAgent(agent: Agent): void {
     if (this.bindings.has(agent)) return
-    const dispose = this.interactions.install(agent.ctx, this.ctx)
+    const dispose = this.installAgentBindings(agent.ctx)
     this.bindings.set(agent, { agent, dispose: once(dispose) })
+  }
+
+  private installAgentBindings(agentCtx: Context): () => void {
+    const disposeInteractions = this.interactions.install(agentCtx, this.ctx)
+    const disposeMedia = this.outboundMedia.install(agentCtx)
+    return () => {
+      disposeMedia()
+      disposeInteractions()
+    }
   }
 
   private async releaseCurrent(): Promise<void> {

@@ -1,6 +1,14 @@
-import { Spectrum, type PlatformProviderConfig, type SpectrumInstance } from '@spectrum-ts/core'
+import {
+  Spectrum,
+  attachment,
+  voice,
+  type PlatformProviderConfig,
+  type SpectrumInstance,
+} from '@spectrum-ts/core'
 import { imessage } from '@spectrum-ts/imessage'
+import { extname } from 'node:path'
 import { PluginError } from './errors.js'
+import type { OutboundMediaPayload } from './outbound-media.js'
 import type { RuntimeView } from './types.js'
 
 /** Recipient marker emitted by Spectrum 12.7 for project-scoped shared lines. */
@@ -28,6 +36,10 @@ export interface SpectrumInboundMessage {
   responding<T>(callback: () => Promise<T>): Promise<T>
   /** Send one plain-text iMessage to the same DM. */
   send(text: string): Promise<void>
+  /** Send one file attachment to the same DM. */
+  sendFile(media: OutboundMediaPayload): Promise<void>
+  /** Send one native audio message to the same DM. */
+  sendVoice(media: OutboundMediaPayload): Promise<void>
 }
 
 /** Running Spectrum connection behind an injectable adapter seam. */
@@ -338,6 +350,28 @@ async function* mapMessages(
       send: async (value) => {
         await space.send(value)
       },
+      sendFile: async (media) => {
+        await space.send(attachmentForOutbound(media))
+      },
+      sendVoice: async (media) => {
+        await space.send(voiceForOutbound(media))
+      },
     }
   }
+}
+
+/** Map outbound file bytes to Spectrum's attachment builder (adapter-local). */
+export function attachmentForOutbound(media: OutboundMediaPayload) {
+  return attachment(media.bytes, { name: media.name, mimeType: media.mimeType })
+}
+
+/** Map outbound audio bytes to Spectrum's voice builder so the native audio flag is set. */
+export function voiceForOutbound(media: OutboundMediaPayload) {
+  const extension = extname(media.name)
+  const stem = extension.length > 0 ? media.name.slice(0, -extension.length) : media.name
+
+  // Spectrum converts non-M4A audio before upload but preserves this name.
+  // Keep the uploaded extension consistent with the converted container so
+  // Messages can read its duration and play it as a native voice message.
+  return voice(media.bytes, { name: `${stem}.m4a`, mimeType: media.mimeType })
 }

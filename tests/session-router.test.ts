@@ -80,6 +80,7 @@ function router(ctx: Context, active = activeStore()): SessionRouter {
     cwd: '/workspace',
     sessionsPerPage: 5,
     maxOutboundChars: 3_500,
+    maxOutboundMediaBytes: 20 * 1024 * 1024,
     interactionTimeoutMs: 600_000,
   })
 }

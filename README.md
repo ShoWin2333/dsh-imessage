@@ -61,6 +61,14 @@ The plugin ensures a Photon project for each configured route name (default `dsh
 
 Ordinary text is queued as a DSH prompt. Prefix a prompt that genuinely begins with `/` using `//`, for example `//review this route`.
 
+During a turn started from iMessage, DSH can also call `send_imessage_file` or
+`send_imessage_voice` with the path of an existing file inside that route's
+workspace. The first sends any file as an attachment; recognized image types
+render as images. The second sends an audio file
+as an iMessage voice message. This initial outbound-only version does not create
+images, synthesize speech, or accept media sent to DSH. Media files are limited
+to 20 MiB.
+
 | Command | Behavior |
 |---|---|
 | `/help` | Show command help. |
