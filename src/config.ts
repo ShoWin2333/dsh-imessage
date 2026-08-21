@@ -11,6 +11,8 @@ export interface Config {
   interactionTimeoutMs?: number
   /** Maximum Unicode-safe outbound iMessage chunk length. */
   maxOutboundChars?: number
+  /** Maximum outbound media file size in bytes. */
+  maxOutboundMediaBytes?: number
   /** Number of DSH sessions shown per `/sessions` page. */
   sessionsPerPage?: number
   /** Maximum durable inbound message ids retained. */
@@ -29,6 +31,8 @@ export interface ResolvedConfig {
   interactionTimeoutMs: number
   /** Maximum Unicode-safe outbound iMessage chunk length. */
   maxOutboundChars: number
+  /** Maximum outbound media file size in bytes. */
+  maxOutboundMediaBytes: number
   /** Number of DSH sessions shown per `/sessions` page. */
   sessionsPerPage: number
   /** Maximum durable inbound message ids retained. */
@@ -44,6 +48,7 @@ export const Config: s<Config> = s.object({
   photonApiOrigin: s.string().default(DEFAULT_PHOTON_API_ORIGIN),
   interactionTimeoutMs: s.number().step(1).min(1_000).default(600_000),
   maxOutboundChars: s.number().step(1).min(256).default(3_500),
+  maxOutboundMediaBytes: s.number().step(1).min(1).default(20 * 1024 * 1024),
   sessionsPerPage: s.number().step(1).min(1).max(20).default(5),
   dedupeEntries: s.number().step(1).min(64).max(8_192).default(1_024),
   reconnectMinMs: s.number().step(1).min(100).default(1_000),
@@ -70,6 +75,7 @@ export function resolveConfig(config: Config = {}): ResolvedConfig {
     photonApiOrigin: url.origin,
     interactionTimeoutMs: config.interactionTimeoutMs ?? 600_000,
     maxOutboundChars: config.maxOutboundChars ?? 3_500,
+    maxOutboundMediaBytes: config.maxOutboundMediaBytes ?? 20 * 1024 * 1024,
     sessionsPerPage: config.sessionsPerPage ?? 5,
     dedupeEntries: config.dedupeEntries ?? 1_024,
     reconnectMinMs,

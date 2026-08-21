@@ -75,6 +75,7 @@ export class RouteManager {
       cwd: workspaceCwd,
       sessionsPerPage: this.config.sessionsPerPage,
       maxOutboundChars: this.config.maxOutboundChars,
+      maxOutboundMediaBytes: this.config.maxOutboundMediaBytes,
       interactionTimeoutMs: this.config.interactionTimeoutMs,
     })
     const spectrum = new SpectrumSupervisor(createSpectrumConnection, {

@@ -115,6 +115,8 @@ describe('fake Photon + Spectrum integration', () => {
       text: 'hello dsh',
       responding: async callback => callback(),
       send: async () => {},
+      sendFile: async () => {},
+      sendVoice: async () => {},
     }
     stream.push(message)
     stream.push(message)

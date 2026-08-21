@@ -14,6 +14,8 @@ function channel(sent: string[]): SpectrumInboundMessage {
     text: 'prompt',
     responding: async callback => callback(),
     send: async text => { sent.push(text) },
+    sendFile: async () => {},
+    sendVoice: async () => {},
   }
 }
 

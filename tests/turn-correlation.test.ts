@@ -13,6 +13,8 @@ function channel(): SpectrumInboundMessage {
     text: 'prompt',
     responding: async callback => callback(),
     send: vi.fn(async () => {}),
+    sendFile: vi.fn(async () => {}),
+    sendVoice: vi.fn(async () => {}),
   }
 }
 
