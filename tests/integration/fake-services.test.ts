@@ -81,7 +81,7 @@ describe('fake Photon + Spectrum integration', () => {
       getProject: async id => createdProject && id === 'project'
         ? { id, name: 'dsh', platforms: ['imessage'], projectSecret: 'private-project-secret' }
         : undefined,
-      createProject: async () => { createdProject = true; return 'project' },
+      createProject: async (_name) => { createdProject = true; return 'project' },
       getPlatforms: async () => ({ imessage: true }),
       enableImessage: async () => {},
       listUsers: async () => ({ total: 0, users: [] }),

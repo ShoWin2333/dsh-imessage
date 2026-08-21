@@ -83,7 +83,41 @@ describe('Photon management idempotency', () => {
     await expect(ensureDshProject(api)).resolves.toEqual({
       id: created.id, name: 'dsh', secret: created.projectSecret,
     })
-    expect(api.createProject).toHaveBeenCalledOnce()
+    expect(api.createProject).toHaveBeenCalledWith('dsh')
+  })
+
+  it('creates or reuses a custom Photon project name for per-machine isolation', async () => {
+    const created = project('machine-b', { name: 'dsh-laptop-b' })
+    const api = management({
+      listProjects: vi.fn(async () => [project('default')]),
+      getProject: vi.fn(async id => id === created.id ? created : undefined),
+      createProject: vi.fn(async () => created.id),
+    })
+    await expect(ensureDshProject(api, undefined, 'dsh-laptop-b')).resolves.toEqual({
+      id: created.id,
+      name: 'dsh-laptop-b',
+      secret: created.projectSecret,
+    })
+    expect(api.createProject).toHaveBeenCalledWith('dsh-laptop-b')
+  })
+
+  it('ignores a stored project when its name no longer matches the configured name', async () => {
+    const stored = project('stored')
+    const next = project('next', { name: 'dsh-desk' })
+    const api = management({
+      getProject: vi.fn(async id => {
+        if (id === stored.id) return stored
+        if (id === next.id) return next
+        return undefined
+      }),
+      listProjects: vi.fn(async () => [stored, next]),
+    })
+    await expect(ensureDshProject(api, stored.id, 'dsh-desk')).resolves.toEqual({
+      id: next.id,
+      name: 'dsh-desk',
+      secret: next.projectSecret,
+    })
+    expect(api.createProject).not.toHaveBeenCalled()
   })
 
   it('reuses one exact phone user across paginated results', async () => {

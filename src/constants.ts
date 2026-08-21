@@ -7,8 +7,13 @@ export const SETTINGS_NAME = 'dsh-imessage'
 /** Credential reference containing the one atomic Photon credential document. */
 export const CREDENTIAL_NAME = 'DSH_IMESSAGE_PHOTON_CREDENTIALS'
 
-/** Project name reserved for DeepSeek Harness. */
-export const PHOTON_PROJECT_NAME = 'dsh'
+/** Default Photon project name when the settings override is unset. */
+export const DEFAULT_PHOTON_PROJECT_NAME = 'dsh'
+
+/**
+ * @deprecated Use DEFAULT_PHOTON_PROJECT_NAME; kept as an alias for existing imports.
+ */
+export const PHOTON_PROJECT_NAME = DEFAULT_PHOTON_PROJECT_NAME
 
 /** Compatibility client id shared with Photon CLI. */
 export const PHOTON_DEVICE_CLIENT_ID = 'photon-cli'

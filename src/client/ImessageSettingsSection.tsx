@@ -49,6 +49,7 @@ function Loaded({ controller }: ImessageSettingsInjected): ReactNode {
       <PageHeader />
       {snapshot.error === undefined ? null : <ErrorNotice error={snapshot.error} />}
       <AuthorizationCard controller={controller} state={snapshot.state} pending={snapshot.pendingAction} />
+      <WorkspaceCard controller={controller} state={snapshot.state} pending={snapshot.pendingAction} />
       <PhoneCard controller={controller} state={snapshot.state} pending={snapshot.pendingAction} />
       <LineCard controller={controller} state={snapshot.state} pending={snapshot.pendingAction} />
       <p className="dsh-imessage-footnote">
@@ -194,6 +195,109 @@ function AuthorizationCard({
   )
 }
 
+function WorkspaceCard({
+  controller,
+  state,
+  pending,
+}: {
+  controller: ImessageSettingsController
+  state: ImessagePluginState
+  pending: string | undefined
+}): ReactNode {
+  const [cwd, setCwd] = useState(state.workspaceCwd)
+  const [projectName, setProjectName] = useState(state.photonProjectName)
+  const [dirty, setDirty] = useState(false)
+  const trimmedCwd = cwd.trim()
+  const trimmedProject = projectName.trim()
+  const projectValid = trimmedProject.length === 0 || isPhotonProjectName(trimmedProject)
+  const cwdValid = trimmedCwd.length === 0 || looksAbsolutePath(trimmedCwd)
+  const canMutate = state.settingsWritable && state.credentialWritable && pending === undefined
+
+  useEffect(() => {
+    if (!dirty) {
+      setCwd(state.workspaceCwd)
+      setProjectName(state.photonProjectName)
+    }
+  }, [dirty, state.workspaceCwd, state.photonProjectName])
+
+  const submit = (event: FormEvent<HTMLFormElement>): void => {
+    event.preventDefault()
+    if (!projectValid || !cwdValid) return
+    void controller.saveWorkspace(trimmedCwd, trimmedProject, state.revision).then((result) => {
+      if (result?.ok === true) setDirty(false)
+    })
+  }
+
+  return (
+    <article className="dsh-imessage-card">
+      <CardTitle
+        number="2"
+        title="Choose workspace routing"
+        status={dirty ? 'Unsaved' : 'Configured'}
+      />
+      <p className="dsh-imessage-body">
+        Point this machine at a local project directory and a Photon project name.
+        Use a distinct Photon project name per machine so hosted lines do not collide.
+      </p>
+      <form className="dsh-imessage-form" onSubmit={submit}>
+        <label htmlFor="dsh-imessage-cwd">Local project directory</label>
+        <input
+          id="dsh-imessage-cwd"
+          type="text"
+          spellCheck={false}
+          autoComplete="off"
+          placeholder="/absolute/path/to/project"
+          value={cwd}
+          aria-invalid={cwd.length > 0 && !cwdValid}
+          disabled={pending !== undefined}
+          onChange={(event) => {
+            setCwd(event.currentTarget.value)
+            setDirty(true)
+          }}
+        />
+        {cwd.length > 0 && !cwdValid ? (
+          <p className="dsh-imessage-error">Use an absolute directory path, or leave blank for the host process cwd.</p>
+        ) : (
+          <p className="dsh-imessage-muted">Leave blank to use the directory where <code>dsh web</code> was started.</p>
+        )}
+        <label htmlFor="dsh-imessage-photon-project">Photon project name</label>
+        <input
+          id="dsh-imessage-photon-project"
+          type="text"
+          spellCheck={false}
+          autoComplete="off"
+          placeholder="dsh"
+          value={projectName}
+          aria-invalid={projectName.length > 0 && !projectValid}
+          disabled={pending !== undefined}
+          onChange={(event) => {
+            setProjectName(event.currentTarget.value)
+            setDirty(true)
+          }}
+        />
+        {projectName.length > 0 && !projectValid ? (
+          <p className="dsh-imessage-error">
+            Start with a letter or digit; only letters, digits, “.”, “_”, and “-” are allowed.
+          </p>
+        ) : (
+          <p className="dsh-imessage-muted">
+            Defaults to <code>dsh</code>. Changing this while authorized switches or creates that Photon project.
+          </p>
+        )}
+        <div className="dsh-imessage-actions">
+          <button
+            type="submit"
+            className="dsh-imessage-button dsh-imessage-primary"
+            disabled={!dirty || !projectValid || !cwdValid || !canMutate}
+          >
+            {pending === 'save-workspace' ? 'Saving…' : 'Save workspace'}
+          </button>
+        </div>
+      </form>
+    </article>
+  )
+}
+
 function PhoneCard({
   controller,
   state,
@@ -225,7 +329,7 @@ function PhoneCard({
   return (
     <article className="dsh-imessage-card">
       <CardTitle
-        number="2"
+        number="3"
         title="Choose your sending number"
         status={state.assignedPhoneNumber === undefined ? 'Not configured' : 'Configured'}
       />
@@ -254,7 +358,9 @@ function PhoneCard({
         {!authorized ? (
           <p className="dsh-imessage-muted">Authorize Photon before saving a number.</p>
         ) : !projectReady ? (
-          <p className="dsh-imessage-muted">The <code>dsh</code> project is still being prepared.</p>
+          <p className="dsh-imessage-muted">
+            The <code>{state.photonProjectName}</code> project is still being prepared.
+          </p>
         ) : null}
         {state.provisioning.phase === 'failed' ? <ErrorNotice error={state.provisioning.error} /> : null}
         <div className="dsh-imessage-actions">
@@ -290,7 +396,7 @@ function LineCard({
 
   return (
     <article className="dsh-imessage-card">
-      <CardTitle number="3" title="Text your hosted line" status={runtimeLabel(state.runtime)} />
+      <CardTitle number="4" title="Text your hosted line" status={runtimeLabel(state.runtime)} />
       {assigned === undefined ? (
         <p className="dsh-imessage-body">Your hosted iMessage number appears here after the sender is saved.</p>
       ) : (
@@ -320,6 +426,8 @@ function LineCard({
           </div>
           <dl className="dsh-imessage-health">
             <div><dt>Listener</dt><dd>{runtimeLabel(state.runtime)}</dd></div>
+            <div><dt>Photon project</dt><dd>{state.photonProjectName}</dd></div>
+            <div><dt>Workspace</dt><dd>{state.workspaceCwd}</dd></div>
             <div><dt>Active session</dt><dd>{state.activeSessionId ?? 'A new session will be created'}</dd></div>
           </dl>
           {state.runtime.phase === 'failed' ? <ErrorNotice error={state.runtime.error} /> : null}
@@ -426,7 +534,7 @@ function authorizationLabel(state: ImessagePluginState): string {
 
 function provisioningLabel(state: ImessagePluginState): string {
   switch (state.provisioning.phase) {
-    case 'project': return 'Preparing dsh project'
+    case 'project': return 'Preparing Photon project'
     case 'user': return 'Preparing hosted line'
     case 'failed': return 'Provisioning failed'
     case 'ready': return 'Authorized'
@@ -446,6 +554,14 @@ function runtimeLabel(runtime: RuntimeView): string {
 
 function isStrictE164(value: string): boolean {
   return /^\+[1-9]\d{1,14}$/u.test(value)
+}
+
+function isPhotonProjectName(value: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u.test(value)
+}
+
+function looksAbsolutePath(value: string): boolean {
+  return value.startsWith('/') || /^[A-Za-z]:[\\/]/u.test(value)
 }
 
 function openAuthorizationWindow(): Window | null {

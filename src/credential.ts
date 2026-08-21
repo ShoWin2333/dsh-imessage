@@ -8,7 +8,7 @@ const PhotonIdentitySchema = z.object({
 
 const PhotonProjectCredentialSchema = z.object({
   id: z.string().min(1),
-  name: z.literal('dsh'),
+  name: z.string().min(1),
   secret: z.string().min(1),
 })
 

@@ -18,6 +18,8 @@ function state(phase: 'disconnected' | 'pending'): ImessagePluginState {
       },
     provisioning: { phase: 'idle' },
     runtime: { phase: 'stopped' },
+    workspaceCwd: '/workspace',
+    photonProjectName: 'dsh',
   }
 }
 
@@ -35,6 +37,7 @@ describe('iMessage settings controller concurrency', () => {
       getState,
       beginAuthorization: vi.fn(async () => success(state('pending'))),
       cancelAuthorization: vi.fn(),
+      saveWorkspace: vi.fn(),
       savePhone: vi.fn(),
       disconnect: vi.fn(),
       retryRuntime: vi.fn(),
@@ -57,6 +60,7 @@ describe('iMessage settings controller concurrency', () => {
       getState: vi.fn(async () => ({ ok: true as const, value: state('disconnected') })),
       beginAuthorization,
       cancelAuthorization: vi.fn(),
+      saveWorkspace: vi.fn(),
       savePhone: vi.fn(),
       disconnect: vi.fn(),
       retryRuntime: vi.fn(),

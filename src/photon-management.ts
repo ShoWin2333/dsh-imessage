@@ -1,6 +1,6 @@
 import { treaty } from '@elysiajs/eden'
 import type { PublicApp } from '@photon-ai/dashboard-api'
-import { PHOTON_PROJECT_NAME } from './constants.js'
+import { DEFAULT_PHOTON_PROJECT_NAME } from './constants.js'
 import { PluginError } from './errors.js'
 import { normalizeE164 } from './phone.js'
 import { createSecureFetch } from './secure-fetch.js'
@@ -34,8 +34,8 @@ export interface PhotonSpectrumUser {
 export interface EnsuredProject {
   /** Photon project id. */
   id: string
-  /** Fixed project name. */
-  name: 'dsh'
+  /** Configured Photon project name. */
+  name: string
   /** Host-only Spectrum project secret. */
   secret: string
 }
@@ -46,8 +46,8 @@ export interface PhotonManagementApi {
   listProjects(): Promise<PhotonProject[]>
   /** Fetch one accessible project or undefined when missing. */
   getProject(id: string): Promise<PhotonProject | undefined>
-  /** Create a US project with iMessage enabled. */
-  createProject(): Promise<string>
+  /** Create a US project with iMessage enabled under the given exact name. */
+  createProject(name: string): Promise<string>
   /** Read platform enablement for one project. */
   getPlatforms(id: string): Promise<Record<string, boolean>>
   /** Enable iMessage for one project. */
@@ -110,9 +110,9 @@ export function createPhotonManagementApi(
         ...(project.projectSecret ? { projectSecret: project.projectSecret } : {}),
       }
     },
-    async createProject() {
+    async createProject(name) {
       const response = await api.api.projects.post({
-        name: PHOTON_PROJECT_NAME,
+        name,
         location: 'United States',
         platforms: ['imessage'],
         template: false,
@@ -126,7 +126,7 @@ export function createPhotonManagementApi(
             'Photon has no shared iMessage line available for this account. Contact Photon support or use a dedicated line.',
           )
         }
-        throw unavailable('Photon did not create the dsh project.')
+        throw unavailable('Photon did not create the configured project.')
       }
       return response.data.id
     },
@@ -181,31 +181,32 @@ export function createPhotonManagementApi(
   }
 }
 
-/** Idempotently select/create the exact `dsh` project and ensure iMessage. */
+/** Idempotently select/create the configured Photon project and ensure iMessage. */
 export async function ensureDshProject(
   api: PhotonManagementApi,
   storedProjectId?: string,
+  projectName: string = DEFAULT_PHOTON_PROJECT_NAME,
 ): Promise<EnsuredProject> {
   let project: PhotonProject | undefined
   if (storedProjectId !== undefined) {
     const stored = await api.getProject(storedProjectId)
-    if (stored?.name === PHOTON_PROJECT_NAME) project = stored
+    if (stored?.name === projectName) project = stored
   }
 
   if (project === undefined) {
-    const exact = (await api.listProjects()).filter(candidate => candidate.name === PHOTON_PROJECT_NAME)
+    const exact = (await api.listProjects()).filter(candidate => candidate.name === projectName)
     if (exact.length > 1) {
       throw new PluginError(
         'project-ambiguous',
-        'Multiple Photon projects are named exactly dsh. Rename extras before continuing.',
+        `Multiple Photon projects are named exactly ${projectName}. Rename extras before continuing.`,
         exact.map(candidate => candidate.id),
       )
     }
     project = exact[0]
     if (project === undefined) {
-      const id = await api.createProject()
+      const id = await api.createProject(projectName)
       project = await api.getProject(id)
-      if (project === undefined || project.name !== PHOTON_PROJECT_NAME) {
+      if (project === undefined || project.name !== projectName) {
         throw unavailable('Photon created a project but it could not be read back.')
       }
     }
@@ -216,9 +217,9 @@ export async function ensureDshProject(
 
   const detail = await api.getProject(project.id)
   if (!detail?.projectSecret) {
-    throw unavailable('The dsh project has no Spectrum secret. Generate one in Photon, then reauthorize.')
+    throw unavailable('The Photon project has no Spectrum secret. Generate one in Photon, then reauthorize.')
   }
-  return { id: detail.id, name: PHOTON_PROJECT_NAME, secret: detail.projectSecret }
+  return { id: detail.id, name: projectName, secret: detail.projectSecret }
 }
 
 /** Reuse one exact phone match or create one shared Spectrum user. */

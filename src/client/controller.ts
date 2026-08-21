@@ -13,7 +13,7 @@ type ImessageRemote = TypertClientRemote['dshPhotonImessage']
 export interface ImessageClientSnapshot {
   phase: 'idle' | 'loading' | 'ready' | 'error'
   state?: ImessagePluginState
-  pendingAction?: 'authorize' | 'cancel' | 'save-phone' | 'disconnect' | 'retry-runtime'
+  pendingAction?: 'authorize' | 'cancel' | 'save-workspace' | 'save-phone' | 'disconnect' | 'retry-runtime'
   error?: PublicPluginError
 }
 
@@ -84,6 +84,19 @@ export class ImessageSettingsController {
   /** Cancel only the active device-code poll. */
   cancelAuthorization(): Promise<MutationResult | undefined> {
     return this.mutate('cancel', () => this.remote.cancelAuthorization())
+  }
+
+  /** Persist the local workspace directory and Photon project name. */
+  saveWorkspace(
+    workspaceCwd: string,
+    photonProjectName: string,
+    expectedRevision: number,
+  ): Promise<MutationResult | undefined> {
+    return this.mutate('save-workspace', () => this.remote.saveWorkspace({
+      workspaceCwd,
+      photonProjectName,
+      expectedRevision,
+    }))
   }
 
   /** Validate/provision one sender and its hosted line. */
