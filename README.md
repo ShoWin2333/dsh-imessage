@@ -1,154 +1,164 @@
-# Photon iMessage for DeepSeek Harness
+# dsh-imessage：让 DSH 真正在 iMessage 里工作
 
-`dsh-imessage` adds a [Photon](https://photon.codes)-hosted iMessage transport and a **Settings → iMessage** page to the DeepSeek Harness web profile. A user authorizes Photon with device login, configures one or more routes, and texts the assigned hosted number(s). Messages on each route become DSH prompts in that route's workspace, and final DSH answers are sent back over iMessage.
+**中文** | [English](./README.en.md)
 
-The initial compatibility target is:
+这个 fork 把 DeepSeek Harness（DSH）接入 iMessage。除了通过短信式对话远程使用 DSH，它还能让 DSH 在当前 iMessage 会话里直接发回**图片、任意文件和原生语音消息**。
 
-- DeepSeek Harness `0.1.0-rc.6`
-- Spectrum `12.7.x` (the package is currently locked to `12.7.0`)
-- Node.js `22.19+` or `24+`
+> 不只是把最终答案转成文字：你可以让 DSH 把工作区里的图表、文档、压缩包或音频直接发到手机上。
 
-## Fork enhancements
+## 本 Fork 新增的能力
 
-This fork extends upstream `dsh-imessage` so one machine (or several machines under the same Photon account) can drive different projects cleanly:
+这些能力是相对上游 [`photon-hq/dsh-imessage`](https://github.com/photon-hq/dsh-imessage) 的主要增强，也是本项目当前最值得关注的部分。
 
-- **Configurable local workspace** — each route picks an absolute project directory instead of being stuck on `dsh web`'s process cwd.
-- **Configurable Photon project name** — defaults to `dsh`, but you can use names like `dsh-laptop` / `dsh-frontend` so machines and routes do not share one cloud project or hosted line.
-- **Multiple iMessage routes on one computer** — Settings can add several routes; each has its own Photon project, local cwd, sender provisioning, hosted line, Spectrum listener, and active DSH session.
-- **Same personal sending number, different hosted lines** — reuse one E.164 sender across routes; Photon still assigns a distinct hosted number per project.
-- **More resilient Photon project setup** — same-origin API redirects are followed safely, and if listing projects fails the plugin falls back to creating the configured project name (avoids opaque `Could not list Photon projects` failures).
+| 能力 | 效果 |
+|---|---|
+| **发送图片** | DSH 可以把工作区里的 PNG、JPEG、GIF、WebP、HEIC 等图片直接发到当前 iMessage 会话，并由“信息”以内联图片显示。 |
+| **发送任意文件** | PDF、文本、CSV、JSON、ZIP 以及其他普通文件都可以作为 iMessage 附件发送，不再局限于图片。 |
+| **发送原生语音** | MP3、M4A、WAV、AIFF、AAC、CAF、OGG 等音频会作为 iMessage 原生语音气泡发送，而不是只返回一个本地路径。 |
+| **每条路由独立工作区** | 每个 iMessage 号码可以绑定一个绝对路径，DSH 在对应项目目录中工作和查找待发送文件。 |
+| **每条路由独立 Photon 项目** | 可自定义 Photon 项目名，避免多台机器或多个项目共享同一个云项目和托管号码。 |
+| **一台电脑配置多条 iMessage 路由** | 每条路由拥有自己的 Photon 项目、工作区、托管号码、监听器和当前 DSH 会话。 |
+| **更稳健的 Photon 配置** | 安全跟随同源 API 重定向；项目列表失败时可回退到创建指定项目，减少不透明的初始化失败。 |
 
-Legacy single-route settings migrate automatically into one default route.
+旧版单路由配置会自动迁移为一条默认路由。
 
-## Install
+### 直接从 iMessage 使用媒体能力
 
-Install the stable npm package, then start DSH (optionally from any directory — workspace cwd is configured per route in Settings):
+你可以自然地对 DSH 说：
+
+- “把 `reports/allocation.png` 发给我。”
+- “把刚生成的 PDF 和原始 CSV 都发过来。”
+- “把这段音频作为语音消息发给我。”
+
+在由 iMessage 发起的当前回合中，模型可以调用：
+
+- `send_imessage_file`：发送图片或任意普通文件；
+- `send_imessage_voice`：发送 iMessage 原生语音消息。
+
+媒体文件必须位于该路由的工作区内，默认最大为 20 MiB。插件会拒绝越过工作区的路径、符号链接逃逸、目录和超限文件。媒体只能发回触发当前回合的那条 iMessage 私聊，浏览器发起的回合不能意外向手机发送附件。
+
+iMessage 原生语音默认可能显示“2 分钟后过期”。这是 Apple 的语音消息保留策略，不是发送失败；可以在消息下方点“保留”，或在 iPhone 的“设置 → App → 信息 → 音频信息 → 过期”中选择“永不”。
+
+### 当前媒体边界
+
+- 当前支持 **DSH → iMessage** 的出站图片、文件和语音。
+- 当前入站仍是文本：你从 iPhone 发给 DSH 的图片、文件和语音不会被处理。
+- 插件负责发送现有文件，本身不负责生成图片或把文字合成为语音；DSH 可以先用其他工具生成文件，再调用发送工具。
+- 最终文字回答仍会被转换为适合 iMessage 的纯文本；Markdown 标记不会原样发送。
+
+## 安装这个 Fork
+
+npm 上未带仓库地址的 `dsh-imessage` 指向上游正式包，不保证包含本 fork 的增强。要使用这里的图片、文件、语音和多路由能力，请从本仓库打包安装：
 
 ```sh
-dsh plugin --profile web add dsh-imessage
-dsh web
-```
-
-DSH forwards `plugin ... add` to the profile package manager. The unqualified package name follows npm's stable `latest` channel; use an explicit prerelease tag only when intentionally testing one.
-
-If DSH is run through `npx` and `pnpm` is not installed globally, supply both tools for the install command without changing the global environment:
-
-```sh
-npx --yes --package=pnpm@10.33.0 --package=@deepseek-ai/dsh \
-  -c 'dsh plugin --profile web add dsh-imessage'
-npx --yes @deepseek-ai/dsh web
-```
-
-For a local checkout or packed build:
-
-```sh
+git clone https://github.com/ShoWin2333/dsh-imessage.git
+cd dsh-imessage
 npm ci --legacy-peer-deps
 npm run build
 npm pack
-dsh plugin --profile web add ./dsh-imessage-*.tgz
 ```
 
-Open **Settings → iMessage** and complete setup:
+如果已经安装过上游包或同版本的旧构建，先移除它，以免包管理器复用缓存：
 
-1. Select **Authorize**. The browser opens a blank window immediately, then navigates it to Photon after DSH receives the device code. If popups are blocked, use the displayed link and copyable code.
-2. Configure one or more **routes**. Each route has a local project directory, a Photon project name, and a sending number. Leave the directory blank to use the `dsh web` process working directory. Leave the Photon name blank to use `dsh`. Use a distinct Photon project name per route (and per machine) so hosted lines do not collide.
-3. Save each route, then save the E.164 number you will text from (the same personal number can be reused across routes).
-4. Copy or text the assigned hosted iMessage number shown for that route.
+```sh
+dsh plugin --profile web remove dsh-imessage
+dsh plugin --profile web add ./dsh-imessage-*.tgz
+dsh web
+```
 
-The plugin ensures a Photon project for each configured route name (default `dsh`). It reuses the stored accessible project first when that project still has the same name, otherwise reuses the sole exact case-sensitive match, and creates a US/iMessage project only when none exists. Multiple exact projects or users are reported with their public IDs for manual resolution; the plugin never chooses arbitrarily.
+如果 DSH 由 launchd 或其他常驻服务启动，请在安装后重启对应服务。
 
-## Commands
+### 兼容目标
 
-Ordinary text is queued as a DSH prompt. Prefix a prompt that genuinely begins with `/` using `//`, for example `//review this route`.
+- DeepSeek Harness `0.1.0-rc.6`
+- Spectrum `12.7.x`（当前锁定为 `12.7.0`）
+- Node.js `22.19+` 或 `24+`
 
-During a turn started from iMessage, DSH can also call `send_imessage_file` or
-`send_imessage_voice` with the path of an existing file inside that route's
-workspace. The first sends any file as an attachment; recognized image types
-render as images. The second sends an audio file
-as an iMessage voice message. This initial outbound-only version does not create
-images, synthesize speech, or accept media sent to DSH. Media files are limited
-to 20 MiB.
+## 配置路由
 
-| Command | Behavior |
+打开 **Settings → iMessage**：
+
+1. 点击 **Authorize**，完成 Photon 设备授权。
+2. 新增或编辑路由，为它设置本地工作区、Photon 项目名和发信号码。
+3. 工作区留空时使用 `dsh web` 的进程目录；Photon 项目名留空时使用 `dsh`。
+4. 保存你会用来给托管号码发消息的 E.164 手机号。同一个个人号码可以复用于多条路由。
+5. 复制该路由分配到的托管 iMessage 号码，并从已配置的个人号码给它发消息。
+
+每条路由应使用不同的 Photon 项目名。Photon 会为每个项目分配独立托管号码，而本地插件会为每条路由维护独立监听器和活动会话。
+
+## 继承自上游的能力
+
+下面这些基础能力来自上游插件，本 fork 在其上继续扩展：
+
+- 通过 Photon 托管号码收取 iMessage，并把文本消息排入 DSH；
+- 在 DSH 设置页完成 Photon 设备授权、号码配置和运行状态查看；
+- 把 DSH 的最终回答发回同一条 iMessage 私聊；
+- 创建、列出和切换同工作区的根会话；
+- 通过 iMessage 处理 DSH 的批准请求和交互式问题；
+- 持久化消息去重、监听器重连、长文本 Unicode 安全分段；
+- 对凭据、路由和当前回合执行 fail-closed 隔离。
+
+## iMessage 命令
+
+普通文字会作为 DSH 提示排队。如果提示本身需要以 `/` 开头，请写成 `//`，例如 `//review this route`。
+
+| 命令 | 行为 |
 |---|---|
-| `/help` | Show command help. |
-| `/new` | Create and select a new root session. |
-| `/sessions [page]` | List same-workspace root sessions, five per page by default. |
-| `/switch <index\|session-id>` | Select a listed session by index, exact ID, or unique ID prefix. |
-| `/status` | Show the active session and its state. |
-| `/stop` or `/cancel` | Cancel the running turn and invalidate prompts still waiting in the iMessage FIFO. |
-| `/approve <request-id>` | Allow one approval request correlated to the iMessage turn. |
-| `/deny <request-id>` | Reject a correlated approval request. |
-| `/answer <request-id> <option-or-text>` | Answer a correlated question. Commas select multiple numbered choices. |
+| `/help` | 显示命令帮助。 |
+| `/new` | 创建并选中一个新的根会话。 |
+| `/sessions [page]` | 列出同工作区的根会话，默认每页五条。 |
+| `/switch <index\|session-id>` | 按列表序号、完整 ID 或唯一 ID 前缀切换会话。 |
+| `/status` | 显示活动会话和当前状态。 |
+| `/stop` 或 `/cancel` | 取消正在运行的回合，并使仍在 iMessage FIFO 中等待的提示失效。 |
+| `/approve <request-id>` | 批准与当前 iMessage 回合关联的请求。 |
+| `/deny <request-id>` | 拒绝关联的请求。 |
+| `/answer <request-id> <option-or-text>` | 回答关联的问题；逗号可选择多个编号选项。 |
 
-`/new` and `/switch` fail while an iMessage prompt is queued/running or a human interaction is pending. Send `/stop` first.
+当 iMessage 提示正在排队/运行或仍有待处理的人机交互时，`/new` 和 `/switch` 会拒绝执行；请先发送 `/stop`。
 
-New sessions for a route use that route's configured workspace directory (or the `dsh web` process working directory when unset), the configured default Agent Preset, and the current default model. Session listing includes only root sessions whose `cwd` exactly matches that route's working directory. Subagents are excluded. A live browser-created Agent can be adopted, but the plugin never disposes an adopted Agent; it disposes only handles it created or resumed itself.
+## 路由与隐私边界
 
-## Routing and privacy boundaries
+入站消息只有同时满足以下条件才会被接收：
 
-The listener accepts only inbound text messages for which all of the following are true:
+- 平台为 iMessage，方向为入站；
+- 会话是私聊；
+- 发件人等于该路由配置的 E.164 号码；
+- 专用连接的收件号码与路由托管号码一致，或消息来自 Photon 已按项目隔离的 shared 路由；
+- 当供应商提供 service 字段时，其值必须是 iMessage；
+- 入站内容为文本。
 
-- platform is iMessage;
-- direction is inbound;
-- space is a direct message;
-- sender equals the E.164 number configured on that route;
-- the route is the assigned hosted line for that route: dedicated connections expose and verify the exact recipient number; shared connections are project-scoped by Photon and carry Spectrum's `shared` recipient sentinel because the provider does not expose an inbound recipient field;
-- service is iMessage when the provider includes service metadata.
+未授权流量会被静默忽略。插件不记录消息正文、原始手机号、设备码、访问令牌或项目密钥。主机只持久化非敏感路由设置、一个不透明 Photon 凭据对象、每条路由的活动会话 ID，以及一个有界的入站消息去重窗口。
 
-Unauthorized traffic is ignored without a reply. The plugin does not log message content, raw phone numbers, device codes, access tokens, or project secrets. It stores:
+每个 iMessage 提示都按精确的 DSH `UserMessage.id` 关联。只有 DSH 真正 claim 该消息后，当前回合才拥有向这条 iMessage 会话发送文字、附件、语音、批准请求或问题的权限。同一 Agent 中由浏览器发起的回合仍只留在浏览器。
 
-- non-secret phone/user/line configuration in the DSH settings namespace `dsh-imessage`;
-- one atomic opaque credential at `DSH_IMESSAGE_PHOTON_CREDENTIALS`, containing the management token, public account identifiers, and Spectrum project secrets for every configured route;
-- selected session IDs per route and a durable bounded window of 1,024 inbound provider message IDs in the `dsh_imessage` storage domain.
+只有最终回答会发送到 iMessage；中间推理、工具活动和部分输出留在 DSH。长回答会尽量在段落、行或单词边界分段，并且不会拆开 Unicode 字素簇。
 
-The browser receives only public account/project/line metadata, authorization URLs and user code, revisions, health, and credential availability flags. Device codes and tokens stay on the host. Photon HTTP calls are pinned to one configured origin, allow a single same-origin redirect hop (for example trailing-slash normalization), and reject cross-origin requests or redirects.
+## Photon 资源行为
 
-Every iMessage prompt is correlated by its exact DSH `UserMessage.id` and only becomes owned after DSH claims that message for a turn. Assistant output, approvals, and questions are forwarded only for that claimed turn. Browser-originated turns in the same adopted session remain in the browser. Approval delivery failure, an unhealthy listener, cancellation, or timeout fails closed.
+插件通过 HTTPS 实现 Photon CLI 兼容的 RFC 8628 设备流程，不启动 Photon CLI，也不读取 CLI 凭据文件。项目和用户配置遵循以下原则：
 
-Only the final assistant answer is delivered. Intermediate reasoning, tool activity, and partial output remain in DSH. Answers are converted from markdown to plain text before delivery, so formatting markers do not arrive raw over iMessage; fenced code blocks and inline code keep their exact contents. Long answers are split near paragraph, line, or word boundaries without splitting Unicode grapheme clusters. Spectrum typing state remains active while the DSH turn runs.
+- 精确复用可访问且同名的 Photon 项目；没有匹配项时才创建 US/iMessage 项目；
+- 多个同名项目或用户会报告公开 ID，插件不会任意选择；
+- 新号码和 Spectrum 连接准备成功后才替换当前路由；准备失败时旧监听器继续工作；
+- 断开连接只清理本地设置和凭据，不删除 Photon 云端项目、用户或托管号码；
+- 管理令牌过期后，现有项目密钥仍可继续路由，但项目和用户变更需要重新授权。
 
-## Photon authorization and resources
+## 主机配置
 
-The plugin implements Photon CLI’s current RFC 8628 device flow directly over HTTPS; it does not launch the CLI or read CLI credential files. It currently uses the CLI compatibility values `client_id=photon-cli`, scope `openid profile email`, and the standard device-code grant. Pending, `slow_down`, HTTP 429, denial, expiry, and cancellation are handled explicitly.
+以下选项只在主机配置中提供，不显示在设置页：
 
-This shared client ID is an intentional compatibility exception. The contract fixture is pinned to Photon CLI commit [`13fb65a3f33e801cb50f7e7a240a8eb6466c4152`](https://github.com/photon-hq/cli/commit/13fb65a3f33e801cb50f7e7a240a8eb6466c4152), including [`src/commands/login.ts`](https://github.com/photon-hq/cli/blob/13fb65a3f33e801cb50f7e7a240a8eb6466c4152/src/commands/login.ts). If Photon issues a dedicated client ID for this plugin, migrate the constants and contract fixture together before changing the production flow.
-
-Automatic user provisioning creates a **shared** Spectrum user with invitations disabled. If an exact phone user already exists, the plugin reuses it whether its allocation is shared or dedicated. If shared capacity is unavailable, setup stops with `shared-line-unavailable`; configure/resolve a dedicated line with Photon before retrying.
-
-For shared allocations, Photon performs hosted-line routing before delivering the project-scoped stream. Spectrum 12.7 represents that route as `space.phone = "shared"`; the plugin therefore verifies the exact configured sender, direct-message shape, and iMessage service while relying on Photon's project boundary for the recipient. Dedicated allocations continue to be checked against the exact assigned hosted number.
-
-Phone replacement is non-destructive. The new Photon user and Spectrum connection are prepared before local settings switch, and the old working listener remains active if preparation fails. Old Photon users are intentionally retained.
-
-When the management token expires, the stored project secret can continue routing messages. Settings shows **Reauthorization required**, and project/user changes remain disabled until the user authorizes again.
-
-**Disconnect is local only.** It stops routing and clears the local credential, settings, active-session selection, and deduplication state. It never deletes Photon projects, users, or hosted-line resources.
-
-## Limitations
-
-- One Photon account per plugin instance; multiple iMessage routes are supported, each with its own Photon project, local workspace, and hosted line.
-- The same personal sending number can be reused across routes; each route still receives its own hosted line.
-- Text-only direct iMessage conversations in v1.
-- Outbound answers are plain text: markdown formatting is stripped, while code blocks are preserved verbatim.
-- Attachments, reactions, group chats, SMS, and RCS are ignored.
-- Same-workspace root DSH sessions for a route are visible to `/sessions` and `/switch` for that route's cwd.
-- No automatic cleanup of Photon cloud resources.
-
-## Host configuration
-
-Defaults are host-only and are not exposed in the settings page:
-
-| Option | Default |
+| 选项 | 默认值 |
 |---|---:|
 | `photonApiOrigin` | `https://app.photon.codes` |
-| `interactionTimeoutMs` | `600000` (10 minutes) |
-| `maxOutboundChars` | `3500` graphemes |
+| `interactionTimeoutMs` | `600000`（10 分钟） |
+| `maxOutboundChars` | `3500` 个字素 |
+| `maxOutboundMediaBytes` | `20971520`（20 MiB） |
 | `sessionsPerPage` | `5` |
 | `dedupeEntries` | `1024` |
 | `reconnectMinMs` | `1000` |
 | `reconnectMaxMs` | `60000` |
 
-Override the bundle row in the web profile’s `cordis.patch.yml`. DSH patch overrides replace the complete row, so preserve both `id` and `name`:
+可以在 web profile 的 `cordis.patch.yml` 中覆盖 bundle 行。DSH patch 会替换整行，因此必须保留 `id` 和 `name`：
 
 ```yaml
 - id: dsh-imessage
@@ -156,70 +166,59 @@ Override the bundle row in the web profile’s `cordis.patch.yml`. DSH patch ove
   config:
     interactionTimeoutMs: 900000
     maxOutboundChars: 3000
+    maxOutboundMediaBytes: 31457280
 ```
 
-Non-HTTPS API origins are rejected except loopback HTTP used by tests.
+除测试使用的 loopback HTTP 外，非 HTTPS Photon API 地址会被拒绝。
 
-## Troubleshooting
+## 限制
 
-| Error | Action |
+- 每个插件实例使用一个 Photon 账户，但可以配置多条 iMessage 路由。
+- 入站当前只接受文本私聊；入站附件、语音、reaction、群聊、SMS 和 RCS 会被忽略。
+- 出站支持最终文字回答、普通文件/图片附件和原生语音；不提供内置图片生成或文字转语音。
+- 同一个人手机号可以复用于多条路由，但每条路由仍需要独立托管号码。
+- `/sessions` 和 `/switch` 只显示工作区完全匹配的根会话，不包含 subagent。
+- 不会自动清理 Photon 云端资源。
+
+## 故障排查
+
+| 错误或现象 | 处理方式 |
 |---|---|
-| `invalid-phone` | Enter `+`, a non-zero country-code digit, and at most 15 total digits. Do not include spaces or punctuation. |
-| `auth-expired` / `auth-denied` | Start authorization again and complete it before the displayed expiry. |
-| `authorization-required` | Reauthorize Photon; current routing may continue if the project secret is still valid. |
-| `project-ambiguous` | Rename all but one exact `dsh` project in Photon, then retry. |
-| `user-ambiguous` / `user-resolution-required` | Resolve duplicate/account-level phone ownership in Photon, then save again. |
-| `shared-line-unavailable` | Ask Photon for shared capacity or configure a dedicated allocation. |
-| `credential-readonly` / `settings-readonly` | Remove the higher-priority read-only DSH override. |
-| `settings-conflict` | Another window changed settings; refresh and retry. |
-| `runtime-failed` | Use **Retry listener**; if it repeats, confirm the project’s iMessage platform and hosted line in Photon. |
+| 图片或语音工具没有被调用 | 确认当前提示是从 iMessage 发起，而不是从 Web 会话发起。 |
+| 文件在工作区外 | 把文件复制到该路由配置的工作区内再发送。 |
+| 语音显示 `00:00` | 确认使用包含本 fork 最新语音容器修复的构建，并在安装同版本包前先 remove 旧包。 |
+| 语音显示“2 分钟后过期” | 点“保留”，或把 iPhone 的音频信息过期设置改为“永不”。 |
+| `invalid-phone` | 使用 `+`、非零国家码数字和最多 15 位总数字，不要包含空格或标点。 |
+| `auth-expired` / `auth-denied` | 重新开始 Photon 授权并在有效期内完成。 |
+| `authorization-required` | 重新授权 Photon；如果项目密钥仍有效，现有路由可能继续运行。 |
+| `project-ambiguous` | 重命名重复项目，只保留一个精确匹配的名称。 |
+| `shared-line-unavailable` | 请求 Photon shared 容量或配置 dedicated allocation。 |
+| `runtime-failed` | 使用 **Retry listener**；若重复失败，检查 Photon 项目的 iMessage 平台和托管号码。 |
 
-## Development and verification
+## 开发与验证
 
 ```sh
 npm ci --legacy-peer-deps
 npm test
 npm run build
 npm pack --dry-run
-# With an rc.6 dsh binary available:
+# 如果本机有 rc.6 DSH：
 DSH_BIN=/path/to/dsh npm run test:profile
 ```
 
-The test suite covers device-flow backoff/cancellation, secret redaction, project/user idempotency and ambiguity, staged phone replacement, ingress filters, durable replay deduplication, reconnects, Unicode chunking, exact turn ownership, approval/question fail-closed behavior, session defaults/filtering/handle ownership, and the interactive settings UI. CI runs the suite, packed-artifact checks, and a disposable DSH web-profile installation on Node 22 and 24.
+测试覆盖设备授权退避/取消、凭据脱敏、Photon 项目与用户幂等性、入站过滤、消息去重、监听器重连、Unicode 分段、精确回合归属、批准/问题 fail-closed、会话生命周期、媒体路径隔离、文件大小限制、附件/语音适配和设置 UI。
 
-## Releasing
+仓库包含 Node 22.19 和 Node 24 的 CI workflow，以及打包后安装到一次性 DSH web profile 的 smoke test。Fork 仓库是否实际执行 Actions 取决于该仓库的 GitHub Actions 设置。
 
-The [release workflow](https://github.com/photon-hq/dsh-imessage/actions/workflows/publish-npm.yml) delegates to BuildSpace's single-package TypeScript pipeline. To release, add the `release` label to a pull request before merging it into `main`. BuildSpace then determines the semantic version, generates release notes, commits the version bump, creates the GitHub Release, runs the full package check, and publishes to npm's stable `latest` channel with provenance.
+## 发布说明
 
-For a prerelease, apply both `release` and `prerelease`; BuildSpace publishes that version to its prerelease channel instead. Unlabeled merges run normal CI but do not release. A manual dispatch can force a release for recovery. BuildSpace's `dry-run` skips npm publication only; when combined with a forced release it still creates the version commit and GitHub Release, so pull-request CI is the safe validation path.
+这个 fork 仍使用与上游相同的 npm 包名 `dsh-imessage`。仓库中继承的发布 workflow 和 npm Trusted Publisher 原本绑定 `photon-hq/dsh-imessage`，不会自动赋予 fork 发布上游 npm 包的权限。除非为 fork 单独配置包名和发布凭据，否则请使用本地 tarball 或 fork 自己的 GitHub Release 分发。
 
-The workflow uses npm Trusted Publishing through GitHub OIDC. Do not add a long-lived `NPM_TOKEN` solely for releases. It intentionally calls BuildSpace `main` because the immutable `v1` workflow predates OIDC support; move to the next immutable BuildSpace tag once it contains `use-oidc`.
+## 上游与参考资料
 
-`dsh-imessage` was bootstrapped once at `0.1.0-alpha.1`, then configured through the npm CLI with these exact Trusted Publisher values:
-
-| Field | Value |
-|---|---|
-| Provider | GitHub Actions |
-| Organization | `photon-hq` |
-| Repository | `dsh-imessage` |
-| Workflow filename | `publish-npm.yml` |
-| Environment | blank |
-| Allowed action | `npm publish` |
-
-The configuration can be inspected through the npm CLI:
-
-```sh
-npx --yes npm@11.19.0 trust list dsh-imessage
-```
-
-OIDC publishing was verified with the alpha releases, including npm's SLSA provenance attestation. The package's publishing access is set to **Require two-factor authentication and disallow tokens**, and the temporary bootstrap CLI session was logged out afterward.
-
-Before a compatibility-target promotion, run a Photon staging smoke test with a real hosted line: authorize, create/reuse `dsh`, provision/reuse a sender, send an inbound prompt, answer an approval and question, exercise `/new`, `/sessions`, `/switch`, stop/restart DSH, confirm replay deduplication, reauthorize after token expiry, and disconnect while verifying the Photon project/users remain.
-
-## References
-
+- [上游 dsh-imessage](https://github.com/photon-hq/dsh-imessage)
+- [本 fork](https://github.com/ShoWin2333/dsh-imessage)
 - [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)
-- [DSH API gateway and generated Typert RPC](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/api-gateway.md)
 - [Photon CLI authentication](https://photon.codes/docs/cli/authentication)
 - [Spectrum TypeScript getting started](https://photon.codes/docs/spectrum-ts/getting-started)
 - [Spectrum iMessage routing](https://photon.codes/docs/spectrum-ts/providers/imessage/connection-and-routing)
